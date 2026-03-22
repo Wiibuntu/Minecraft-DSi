@@ -1,5 +1,5 @@
 
-# MC DSi Prototype
+# Minecraft Legacy DSI Port
 
 This is a minimal Nintendo DSi port of Minecaft Legacy Edition
 
