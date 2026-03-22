@@ -10,7 +10,11 @@ enum BlockType {
     BLOCK_WOOD = 4,
     BLOCK_LEAVES = 5,
     BLOCK_SAND = 6,
-    BLOCK_WATER = 7
+    BLOCK_WATER = 7,
+    BLOCK_COBBLE = 8,
+    BLOCK_PLANKS = 9,
+    BLOCK_BRICK = 10,
+    BLOCK_GLASS = 11
 };
 
 static const int WORLD_X = 32;

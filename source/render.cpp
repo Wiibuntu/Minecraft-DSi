@@ -4,7 +4,6 @@
 
 #include <nds.h>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 
 static const int SCREEN_W = 256;
@@ -16,6 +15,22 @@ static const float FOV = 1.0f;
 static const float MAX_RAY_DIST = 12.5f;
 static const int MAX_RAY_STEPS = 54;
 
+static const int kPlaceableBlocks[] = {
+    BLOCK_GRASS,
+    BLOCK_DIRT,
+    BLOCK_STONE,
+    BLOCK_WOOD,
+    BLOCK_LEAVES,
+    BLOCK_SAND,
+    BLOCK_WATER,
+    BLOCK_COBBLE,
+    BLOCK_PLANKS,
+    BLOCK_BRICK,
+    BLOCK_GLASS
+};
+static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
+
+static bool gMapVisible = false;
 static int gTopBg = -1;
 static int gBottomBg = -1;
 static u16* gTopFb = nullptr;
@@ -56,13 +71,19 @@ static inline u16 shadeColor(u16 color, int face, bool highlighted, int fog) {
     int b = (color >> 10) & 31;
 
     if (face == 1) {
-        r = (r * 13) / 10; g = (g * 13) / 10; b = (b * 13) / 10;
+        r = (r * 13) / 10;
+        g = (g * 13) / 10;
+        b = (b * 13) / 10;
     } else if (face >= 2) {
-        r = (r * 8) / 10; g = (g * 8) / 10; b = (b * 8) / 10;
+        r = (r * 8) / 10;
+        g = (g * 8) / 10;
+        b = (b * 8) / 10;
     }
 
     if (highlighted) {
-        r += 5; g += 5; b += 5;
+        r += 5;
+        g += 5;
+        b += 5;
     }
 
     r = clamp5(r - fog);
@@ -72,23 +93,20 @@ static inline u16 shadeColor(u16 color, int face, bool highlighted, int fog) {
 }
 
 static const u16* textureForBlockFace(int block, int face, bool topFace) {
+    (void)face;
     switch (block) {
-        case BLOCK_GRASS:
-            return TEX_GRASS_TOP;
-        case BLOCK_DIRT:
-            return TEX_DIRT;
-        case BLOCK_STONE:
-            return TEX_STONE;
-        case BLOCK_WOOD:
-            return topFace ? TEX_WOOD_TOP : TEX_WOOD_SIDE;
-        case BLOCK_LEAVES:
-            return TEX_LEAVES;
-        case BLOCK_SAND:
-            return TEX_SAND;
-        case BLOCK_WATER:
-            return TEX_WATER;
-        default:
-            return TEX_STONE;
+        case BLOCK_GRASS: return TEX_GRASS_TOP;
+        case BLOCK_DIRT: return TEX_DIRT;
+        case BLOCK_STONE: return TEX_STONE;
+        case BLOCK_WOOD: return topFace ? TEX_WOOD_TOP : TEX_WOOD_SIDE;
+        case BLOCK_LEAVES: return TEX_LEAVES;
+        case BLOCK_SAND: return TEX_SAND;
+        case BLOCK_WATER: return TEX_WATER;
+        case BLOCK_COBBLE: return TEX_COBBLE;
+        case BLOCK_PLANKS: return TEX_PLANKS;
+        case BLOCK_BRICK: return TEX_BRICK;
+        case BLOCK_GLASS: return TEX_GLASS;
+        default: return TEX_STONE;
     }
 }
 
@@ -100,8 +118,14 @@ static inline u16 sampleTexture(const u16* tex, float u, float v) {
 
 static void drawRect(u16* fb, int x, int y, int w, int h, u16 color) {
     if (w <= 0 || h <= 0) return;
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
     if (x + w > 256) w = 256 - x;
     if (y + h > 192) h = 192 - y;
     if (w <= 0 || h <= 0) return;
@@ -111,6 +135,103 @@ static void drawRect(u16* fb, int x, int y, int w, int h, u16 color) {
     }
 }
 
+static void drawTextPixel(u16* fb, int x, int y, const char* text, u16 color) {
+    static const unsigned char glyphs[][5] = {
+        {0,0,0,0,0},          // space
+        {31,17,17,17,17},     // A
+        {31,21,21,10,0},      // B
+        {14,17,17,17,0},      // C
+        {31,17,17,14,0},      // D
+        {31,21,21,17,0},      // E
+        {31,20,20,16,0},      // F
+        {14,17,19,15,0},      // G
+        {31,4,4,31,0},        // H
+        {17,31,17,0,0},       // I
+        {1,1,17,30,0},        // J
+        {31,4,10,17,0},       // K
+        {31,1,1,1,0},         // L
+        {31,12,3,12,31},      // M
+        {31,8,4,2,31},        // N
+        {14,17,17,14,0},      // O
+        {31,20,20,8,0},       // P
+        {14,17,19,15,1},      // Q
+        {31,20,22,9,0},       // R
+        {9,21,21,18,0},       // S
+        {16,31,16,0,0},       // T
+        {30,1,1,30,0},        // U
+        {28,2,1,2,28},        // V
+        {30,1,6,1,30},        // W
+        {17,10,4,10,17},      // X
+        {24,4,3,4,24},        // Y
+        {19,21,25,17,0}       // Z
+    };
+
+    auto glyphIndex = [](char c) -> int {
+        if (c == ' ') return 0;
+        if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
+        return 0;
+    };
+
+    for (int i = 0; text[i]; ++i) {
+        int gi = glyphIndex(text[i]);
+        for (int col = 0; col < 5; ++col) {
+            unsigned char bits = glyphs[gi][col];
+            for (int row = 0; row < 5; ++row) {
+                if (bits & (1 << (4 - row))) {
+                    drawRect(fb, x + i * 6 + col, y + row, 1, 1, color);
+                }
+            }
+        }
+    }
+}
+
+static void drawBlockIcon(u16* fb, int x, int y, int block, bool selected) {
+    drawRect(fb, x, y, 28, 28, rgb15(8, 8, 10));
+    drawRect(fb, x + 2, y + 2, 24, 24, rgb15(2, 2, 3));
+    if (selected) {
+        drawRect(fb, x - 2, y - 2, 32, 2, rgb15(31, 31, 31));
+        drawRect(fb, x - 2, y + 28, 32, 2, rgb15(31, 31, 31));
+        drawRect(fb, x - 2, y - 2, 2, 32, rgb15(31, 31, 31));
+        drawRect(fb, x + 28, y - 2, 2, 32, rgb15(31, 31, 31));
+    }
+    const u16* tex = textureForBlockFace(block, 1, true);
+    for (int py = 0; py < 16; ++py) {
+        u16* row = fb + (y + 6 + py) * 256 + (x + 6);
+        int ty = (py * TEX_SIZE) >> 4;
+        for (int px = 0; px < 16; ++px) {
+            int tx = (px * TEX_SIZE) >> 4;
+            row[px] = tex[ty * TEX_SIZE + tx];
+        }
+    }
+}
+
+static void drawMapPanel(u16* fb, int playerX, int playerZ) {
+    const int panelX = 18;
+    const int panelY = 16;
+    const int panelW = 148;
+    const int panelH = 148;
+    const int mapX0 = panelX + 10;
+    const int mapY0 = panelY + 10;
+    const int cell = 4;
+
+    drawRect(fb, panelX, panelY, panelW, panelH, rgb15(5, 6, 8));
+    drawRect(fb, panelX + 2, panelY + 2, panelW - 4, panelH - 4, rgb15(1, 2, 3));
+    drawTextPixel(fb, panelX + 10, panelY + 136, "MAP", rgb15(31, 31, 31));
+
+    for (int z = 0; z < WORLD_Z; ++z) {
+        for (int x = 0; x < WORLD_X; ++x) {
+            int topBlock = getTopVisibleBlock(x, z);
+            u16 c = rgb15(1, 1, 1);
+            if (topBlock != BLOCK_AIR) {
+                c = shadeColor(textureForBlockFace(topBlock, 1, true)[0], 1, false, 0);
+            }
+            drawRect(fb, mapX0 + x * cell, mapY0 + z * cell, cell - 1, cell - 1, c);
+        }
+    }
+
+    drawRect(fb, mapX0 + playerX * cell - 1, mapY0 + playerZ * cell - 1, 3, 3, rgb15(31, 0, 0));
+}
+
 static void rebuildHudStatic() {
     u16* fb = &gHudStatic[0][0];
     for (int y = 0; y < 192; ++y) {
@@ -118,39 +239,26 @@ static void rebuildHudStatic() {
         for (int x = 0; x < 256; ++x) row[x] = rgb15(3, 3, 5);
     }
 
-    static const int slotBlocks[7] = {BLOCK_GRASS, BLOCK_DIRT, BLOCK_STONE, BLOCK_WOOD, BLOCK_LEAVES, BLOCK_SAND, BLOCK_WATER};
-    for (int i = 0; i < 7; ++i) {
-        int x = 10 + i * 34;
-        int y = 146;
-        drawRect(fb, x, y, 28, 28, rgb15(8, 8, 10));
-        drawRect(fb, x + 2, y + 2, 24, 24, rgb15(2, 2, 3));
-        const u16* tex = textureForBlockFace(slotBlocks[i], 1, true);
-        for (int py = 0; py < 16; ++py) {
-            u16* row = fb + (y + 6 + py) * 256 + (x + 6);
-            int ty = (py * TEX_SIZE) >> 4;
-            for (int px = 0; px < 16; ++px) {
-                int tx = (px * TEX_SIZE) >> 4;
-                row[px] = tex[ty * TEX_SIZE + tx];
-            }
-        }
-    }
+    drawRect(fb, 196, 8, 50, 18, rgb15(8, 8, 12));
+    drawRect(fb, 198, 10, 46, 14, rgb15(2, 2, 3));
+    drawTextPixel(fb, 206, 15, "MAP", rgb15(31, 31, 31));
 
-    const int mapX0 = 10;
-    const int mapY0 = 12;
-    const int cell = 4;
-    for (int z = 0; z < WORLD_Z; ++z) {
-        for (int x = 0; x < WORLD_X; ++x) {
-            int topBlock = getTopVisibleBlock(x, z);
-            u16 c = rgb15(1, 1, 1);
-            if (topBlock != BLOCK_AIR) c = shadeColor(textureForBlockFace(topBlock, 1, true)[0], 1, false, 0);
-            drawRect(fb, mapX0 + x * cell, mapY0 + z * cell, cell - 1, cell - 1, c);
-        }
-    }
+    const int infoY = 12;
+    drawRect(fb, 10, infoY, 92, 8, rgb15(6, 6, 8));
+    drawRect(fb, 10, infoY + 12, 92, 8, rgb15(6, 6, 8));
+    drawRect(fb, 10, infoY + 24, 92, 8, rgb15(6, 6, 8));
 
-    const int infoY = 118;
-    drawRect(fb, 152, infoY, 92, 8, rgb15(6, 6, 8));
-    drawRect(fb, 152, infoY + 12, 92, 8, rgb15(6, 6, 8));
-    drawRect(fb, 152, infoY + 24, 92, 8, rgb15(6, 6, 8));
+    int startX = 16;
+    int startY = 62;
+    int gapX = 38;
+    int gapY = 36;
+    for (int i = 0; i < kPlaceableBlockCount; ++i) {
+        int row = i / 6;
+        int col = i % 6;
+        int x = startX + col * gapX;
+        int y = startY + row * gapY;
+        drawBlockIcon(fb, x, y, kPlaceableBlocks[i], false);
+    }
 
     gHudRevision = getWorldRevision();
     gHudStaticValid = true;
@@ -202,6 +310,7 @@ void initRenderer() {
         }
     }
 
+    gMapVisible = false;
     gHudStaticValid = false;
     gHudFrameValid = false;
     gHudRevision = -1;
@@ -294,6 +403,35 @@ RayHit castCenterRay(const Player& p, float maxDist) {
     return castRayInternal(p, dirX, dirY, dirZ, maxDist);
 }
 
+HudTouchAction handleHudTouch(int x, int y) {
+    HudTouchAction action{HUD_TOUCH_NONE, 0};
+
+    if (x >= 196 && x < 246 && y >= 8 && y < 26) {
+        gMapVisible = !gMapVisible;
+        gHudFrameValid = false;
+        action.type = HUD_TOUCH_TOGGLE_MAP;
+        return action;
+    }
+
+    int startX = 16;
+    int startY = 62;
+    int gapX = 38;
+    int gapY = 36;
+    for (int i = 0; i < kPlaceableBlockCount; ++i) {
+        int row = i / 6;
+        int col = i % 6;
+        int sx = startX + col * gapX;
+        int sy = startY + row * gapY;
+        if (x >= sx && x < sx + 28 && y >= sy && y < sy + 28) {
+            action.type = HUD_TOUCH_SELECT_BLOCK;
+            action.value = kPlaceableBlocks[i];
+            return action;
+        }
+    }
+
+    return action;
+}
+
 static bool shouldRedraw3D(const Player& p) {
     int rev = getWorldRevision();
     bool worldChanged = (rev != gLastWorldRevision3D);
@@ -308,9 +446,7 @@ static bool shouldRedraw3D(const Player& p) {
 
 void renderFrame(const Player& p) {
     ++gFrameCounter;
-    if (!shouldRedraw3D(p)) {
-        return;
-    }
+    if (!shouldRedraw3D(p)) return;
 
     RayHit center = castCenterRay(p, 6.0f);
 
@@ -362,6 +498,9 @@ void renderFrame(const Player& p) {
                 color = sampleTexture(tex, u, v);
                 int fog = (int)(hit.dist * 2.0f);
                 color = shadeColor(color, hit.face, hl, fog);
+                if (hit.block == BLOCK_GLASS) {
+                    color = shadeColor(rgb15(22, 24, 26), hit.face, hl, fog / 2);
+                }
             } else {
                 color = (py < RENDER_H / 2) ? gSkyColor[py] : gGroundColor[py];
             }
@@ -375,13 +514,9 @@ void renderFrame(const Player& p) {
         for (int x = 0; x < SCREEN_W; ++x) dst[x] = src[gXMap[x]];
     }
 
-    for (int y = 0; y < SCREEN_H; ++y) {
-        gTopFb[y * 256 + SCREEN_W / 2] = rgb15(31, 31, 31);
-    }
+    for (int y = 0; y < SCREEN_H; ++y) gTopFb[y * 256 + SCREEN_W / 2] = rgb15(31, 31, 31);
     u16* midRow = gTopFb + (SCREEN_H / 2) * 256;
-    for (int x = SCREEN_W / 2 - 3; x <= SCREEN_W / 2 + 3; ++x) {
-        midRow[x] = rgb15(31, 31, 31);
-    }
+    for (int x = SCREEN_W / 2 - 3; x <= SCREEN_W / 2 + 3; ++x) midRow[x] = rgb15(31, 31, 31);
 
     gLastYaw = p.yaw;
     gLastPitch = p.pitch;
@@ -392,9 +527,7 @@ void renderFrame(const Player& p) {
 }
 
 void renderHUD(const Player& p, const RayHit& hit) {
-    if (!gHudStaticValid || gHudRevision != getWorldRevision()) {
-        rebuildHudStatic();
-    }
+    if (!gHudStaticValid || gHudRevision != getWorldRevision()) rebuildHudStatic();
 
     ++gHudFrameCounter;
     if (gHudFrameValid && (gHudFrameCounter & 1)) {
@@ -404,24 +537,7 @@ void renderHUD(const Player& p, const RayHit& hit) {
 
     std::memcpy(gBottomFb, gHudStatic, 192 * 256 * sizeof(u16));
 
-    static const int slotBlocks[7] = {BLOCK_GRASS, BLOCK_DIRT, BLOCK_STONE, BLOCK_WOOD, BLOCK_LEAVES, BLOCK_SAND, BLOCK_WATER};
-    for (int i = 0; i < 7; ++i) {
-        int x = 10 + i * 34;
-        int y = 146;
-        if (slotBlocks[i] == p.selectedBlock) {
-            drawRect(gBottomFb, x - 2, y - 2, 32, 2, rgb15(31, 31, 31));
-            drawRect(gBottomFb, x - 2, y + 28, 32, 2, rgb15(31, 31, 31));
-            drawRect(gBottomFb, x - 2, y - 2, 2, 32, rgb15(31, 31, 31));
-            drawRect(gBottomFb, x + 28, y - 2, 2, 32, rgb15(31, 31, 31));
-        }
-    }
-
-    const int mapX0 = 10;
-    const int mapY0 = 12;
-    const int cell = 4;
-    drawRect(gBottomFb, mapX0 + (int)(p.x * cell) - 1, mapY0 + (int)(p.z * cell) - 1, 3, 3, rgb15(31, 0, 0));
-
-    const int infoY = 118;
+    int infoY = 12;
     int yawBar = ((int)(p.yaw * 40.0f) % 92 + 92) % 92;
     int pitchBar = (int)((p.pitch + 0.8f) / 1.6f * 90.0f);
     int distBar = hit.hit ? (int)(92.0f - hit.dist * 14.0f) : 0;
@@ -430,9 +546,28 @@ void renderHUD(const Player& p, const RayHit& hit) {
     if (distBar < 0) distBar = 0;
     if (distBar > 92) distBar = 92;
 
-    drawRect(gBottomFb, 152 + yawBar, infoY, 2, 8, rgb15(31, 18, 0));
-    drawRect(gBottomFb, 152 + pitchBar, infoY + 12, 2, 8, rgb15(0, 24, 31));
-    drawRect(gBottomFb, 152, infoY + 24, distBar, 8, hit.hit ? rgb15(0, 31, 0) : rgb15(12, 0, 0));
+    drawRect(gBottomFb, 10 + yawBar, infoY, 2, 8, rgb15(31, 18, 0));
+    drawRect(gBottomFb, 10 + pitchBar, infoY + 12, 2, 8, rgb15(0, 24, 31));
+    drawRect(gBottomFb, 10, infoY + 24, distBar, 8, hit.hit ? rgb15(0, 31, 0) : rgb15(12, 0, 0));
+
+    int startX = 16;
+    int startY = 62;
+    int gapX = 38;
+    int gapY = 36;
+    for (int i = 0; i < kPlaceableBlockCount; ++i) {
+        int row = i / 6;
+        int col = i % 6;
+        int x = startX + col * gapX;
+        int y = startY + row * gapY;
+        drawBlockIcon(gBottomFb, x, y, kPlaceableBlocks[i], kPlaceableBlocks[i] == p.selectedBlock);
+    }
+
+    if (gMapVisible) {
+        drawMapPanel(gBottomFb, (int)p.x, (int)p.z);
+        drawRect(gBottomFb, 196, 8, 50, 18, rgb15(12, 7, 7));
+        drawRect(gBottomFb, 198, 10, 46, 14, rgb15(4, 1, 1));
+        drawTextPixel(gBottomFb, 208, 15, "MAP", rgb15(31, 24, 24));
+    }
 
     std::memcpy(gHudFrame, gBottomFb, 192 * 256 * sizeof(u16));
     gHudFrameValid = true;

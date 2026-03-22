@@ -44,7 +44,7 @@ bool isSolidBlock(int x, int y, int z) {
 
 bool isOpaqueBlock(int x, int y, int z) {
     int b = getBlock(x, y, z);
-    return b != BLOCK_AIR && b != BLOCK_WATER;
+    return b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_GLASS;
 }
 
 int getTopVisibleBlock(int x, int z) {

@@ -4,14 +4,33 @@
 #include "render.h"
 #include "world.h"
 
-static void changeSelectedBlock(Player& p, int delta) {
-    static const int blocks[] = {BLOCK_GRASS, BLOCK_DIRT, BLOCK_STONE, BLOCK_WOOD, BLOCK_LEAVES, BLOCK_SAND, BLOCK_WATER};
-    int idx = 0;
-    for (int i = 0; i < 7; ++i) {
-        if (blocks[i] == p.selectedBlock) idx = i;
+static const int kPlaceableBlocks[] = {
+    BLOCK_GRASS,
+    BLOCK_DIRT,
+    BLOCK_STONE,
+    BLOCK_WOOD,
+    BLOCK_LEAVES,
+    BLOCK_SAND,
+    BLOCK_WATER,
+    BLOCK_COBBLE,
+    BLOCK_PLANKS,
+    BLOCK_BRICK,
+    BLOCK_GLASS
+};
+
+static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
+
+static int selectedIndexFromBlock(int block) {
+    for (int i = 0; i < kPlaceableBlockCount; ++i) {
+        if (kPlaceableBlocks[i] == block) return i;
     }
-    idx = (idx + delta + 7) % 7;
-    p.selectedBlock = blocks[idx];
+    return 0;
+}
+
+static void changeSelectedBlock(Player& p, int delta) {
+    int idx = selectedIndexFromBlock(p.selectedBlock);
+    idx = (idx + delta + kPlaceableBlockCount) % kPlaceableBlockCount;
+    p.selectedBlock = kPlaceableBlocks[idx];
 }
 
 int main() {
@@ -22,6 +41,7 @@ int main() {
 
     Player player;
     initPlayer(player);
+    player.selectedBlock = BLOCK_GRASS;
 
     while (1) {
         swiWaitForVBlank();
@@ -30,7 +50,16 @@ int main() {
         int down = keysDown();
 
         if (down & KEY_START) changeSelectedBlock(player, +1);
-        if (down & KEY_TOUCH) changeSelectedBlock(player, -1);
+        if (down & KEY_SELECT) changeSelectedBlock(player, -1);
+
+        if (down & KEY_TOUCH) {
+            touchPosition touch;
+            touchRead(&touch);
+            HudTouchAction action = handleHudTouch(touch.px, touch.py);
+            if (action.type == HUD_TOUCH_SELECT_BLOCK) {
+                player.selectedBlock = action.value;
+            }
+        }
 
         updatePlayer(player, held, down);
 
