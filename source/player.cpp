@@ -42,8 +42,8 @@ void updatePlayer(Player& p, int held, int down) {
     if (held & KEY_Y) p.yaw -= kYawStep;
     if (held & KEY_A) p.yaw += kYawStep;
 
-    if (held & KEY_X) p.pitch -= kPitchStep;
-    if (held & KEY_B) p.pitch += kPitchStep;
+    if (held & KEY_B) p.pitch -= kPitchStep;
+    if (held & KEY_X) p.pitch += kPitchStep;
     if (p.pitch < -0.8f) p.pitch = -0.8f;
     if (p.pitch > 0.8f) p.pitch = 0.8f;
 

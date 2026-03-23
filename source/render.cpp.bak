@@ -5,19 +5,16 @@
 
 #include <nds.h>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 
 static const int SCREEN_W = 256;
 static const int SCREEN_H = 192;
-static const int MIN_RENDER_W = 52;
-static const int MIN_RENDER_H = 40;
-static const int MAX_RENDER_W = 129;
-static const int MAX_RENDER_H = 96;
+static const int RENDER_W = 52;
+static const int RENDER_H = 40;
 static const float EYE_HEIGHT = 1.45f;
-static const float FOV = 0.80f;
-static const float MAX_RAY_DIST = 7.5f;
-static const int MAX_RAY_STEPS = 32;
+static const float FOV = 1.0f;
+static const float MAX_RAY_DIST = 12.5f;
+static const int MAX_RAY_STEPS = 54;
 
 static const int kPlaceableBlocks[] = {
     BLOCK_GRASS,
@@ -39,16 +36,14 @@ static int gTopBg = -1;
 static int gBottomBg = -1;
 static u16* gTopFb = nullptr;
 static u16* gBottomFb = nullptr;
-static int gRenderW = 56;
-static int gRenderH = 42;
-static u16 gLowRes[MAX_RENDER_H][MAX_RENDER_W];
-static float gNx[MAX_RENDER_W];
-static float gNy[MAX_RENDER_H];
-static float gInvLen[MAX_RENDER_H][MAX_RENDER_W];
+static u16 gLowRes[RENDER_H][RENDER_W];
+static float gNx[RENDER_W];
+static float gNy[RENDER_H];
+static float gInvLen[RENDER_H][RENDER_W];
 static int gXMap[SCREEN_W];
 static int gYMap[SCREEN_H];
-static u16 gSkyColor[MAX_RENDER_H];
-static u16 gGroundColor[MAX_RENDER_H];
+static u16 gSkyColor[RENDER_H];
+static u16 gGroundColor[RENDER_H];
 static u16 gHudStatic[192][256];
 static bool gHudStaticValid = false;
 static int gHudRevision = -1;
@@ -69,8 +64,6 @@ static u16 gMenuBottomBase[192][256];
 enum MenuCacheScreen {
     MENU_CACHE_NONE = 0,
     MENU_CACHE_TITLE,
-    MENU_CACHE_OPTIONS,
-    MENU_CACHE_GRAPHICS,
     MENU_CACHE_LOADING,
     MENU_CACHE_PAUSE
 };
@@ -81,49 +74,6 @@ static int gLastMenuLogoY = -1;
 static int gLastMenuLogoW = 0;
 static int gLastMenuLogoH = 0;
 static int gLastLoadingProgress = -1;
-static int gLastGraphicsSlider = -1;
-
-static inline u16 rgb15(int r, int g, int b);
-
-static int graphicsSliderValue() {
-    const int rangeW = MAX_RENDER_W - MIN_RENDER_W;
-    if (rangeW <= 0) return 0;
-    int value = ((gRenderW - MIN_RENDER_W) * 100 + rangeW / 2) / rangeW;
-    if (value < 0) value = 0;
-    if (value > 100) value = 100;
-    return value;
-}
-
-static void rebuildProjectionTables() {
-    const float aspect = (float)gRenderW / (float)gRenderH;
-    for (int x = 0; x < gRenderW; ++x) {
-        float nx = ((x + 0.5f) / (float)gRenderW) * 2.0f - 1.0f;
-        gNx[x] = nx * aspect * FOV;
-    }
-    for (int y = 0; y < gRenderH; ++y) {
-        float ny = ((y + 0.5f) / (float)gRenderH) * 2.0f - 1.0f;
-        gNy[y] = ny * FOV;
-    }
-    for (int y = 0; y < gRenderH; ++y) {
-        const float ny = gNy[y];
-        for (int x = 0; x < gRenderW; ++x) {
-            const float nx = gNx[x];
-            gInvLen[y][x] = 1.0f / sqrtf(nx * nx + ny * ny + 1.0f);
-        }
-    }
-    for (int x = 0; x < SCREEN_W; ++x) gXMap[x] = (x * gRenderW) / SCREEN_W;
-    for (int y = 0; y < SCREEN_H; ++y) gYMap[y] = (y * gRenderH) / SCREEN_H;
-
-    for (int py = 0; py < gRenderH; ++py) {
-        if (py < gRenderH / 2) {
-            int band = 10 + py / 4;
-            gSkyColor[py] = rgb15(4 + band / 4, 10 + band / 3, 18 + band / 2);
-        } else {
-            int band = py - gRenderH / 2;
-            gGroundColor[py] = rgb15(4 + band / 4, 8 + band / 5, 4 + band / 6);
-        }
-    }
-}
 
 static inline u16 rgb15(int r, int g, int b) {
     return RGB15(r, g, b) | BIT(15);
@@ -184,42 +134,6 @@ static inline u16 sampleTexture(const u16* tex, float u, float v) {
     return tex[ty * TEX_SIZE + tx];
 }
 
-static inline u16 blendColor50(u16 a, u16 b) {
-    int ar = a & 31;
-    int ag = (a >> 5) & 31;
-    int ab = (a >> 10) & 31;
-    int br = b & 31;
-    int bg = (b >> 5) & 31;
-    int bb = (b >> 10) & 31;
-    return rgb15((ar + br) >> 1, (ag + bg) >> 1, (ab + bb) >> 1);
-}
-
-static inline u16 sampleHitTexture(const Player& p, const RayHit& hit, float dirX, float dirY, float dirZ, float eyeY) {
-    const float hx = p.x + dirX * hit.dist;
-    const float hy = eyeY + dirY * hit.dist;
-    const float hz = p.z + dirZ * hit.dist;
-    float u = 0.0f;
-    float v = 0.0f;
-    bool topFace = false;
-    if (hit.face == 0) {
-        u = hz - floorf(hz);
-        v = hy - floorf(hy);
-    } else if (hit.face == 1) {
-        u = hx - floorf(hx);
-        v = hz - floorf(hz);
-        topFace = (dirY < 0.0f);
-    } else {
-        u = hx - floorf(hx);
-        v = hy - floorf(hy);
-    }
-    u16 texel = sampleTexture(textureForBlockFace(hit.block, hit.face, topFace), u, v);
-    return texel;
-}
-
-static inline u16 shadeHitTexture(const Player& p, const RayHit& hit, float dirX, float dirY, float dirZ, float eyeY, bool highlighted) {
-    return shadeColor(sampleHitTexture(p, hit, dirX, dirY, dirZ, eyeY), hit.face, highlighted, (int)(hit.dist * 2.0f));
-}
-
 static void drawRect(u16* fb, int x, int y, int w, int h, u16 color) {
     if (w <= 0 || h <= 0) return;
     if (x < 0) {
@@ -267,23 +181,12 @@ static void drawTextPixel(u16* fb, int x, int y, const char* text, u16 color) {
         {30,1,6,1,30},        // W
         {17,10,4,10,17},      // X
         {24,4,3,4,24},        // Y
-        {19,21,25,17,0},      // Z
-        {14,19,21,25,14},     // 0
-        {0,17,31,1,0},        // 1
-        {19,21,21,21,9},      // 2
-        {17,21,21,21,10},     // 3
-        {28,4,4,31,4},        // 4
-        {29,21,21,21,18},     // 5
-        {14,21,21,21,2},      // 6
-        {16,23,24,20,16},     // 7
-        {10,21,21,21,10},     // 8
-        {8,21,21,21,14}       // 9
+        {19,21,25,17,0}       // Z
     };
 
     auto glyphIndex = [](char c) -> int {
         if (c == ' ') return 0;
         if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-        if (c >= '0' && c <= '9') return 27 + (c - '0');
         return 0;
     };
 
@@ -294,43 +197,6 @@ static void drawTextPixel(u16* fb, int x, int y, const char* text, u16 color) {
             for (int row = 0; row < 5; ++row) {
                 if (bits & (1 << (4 - row))) {
                     drawRect(fb, x + i * 6 + col, y + row, 1, 1, color);
-                }
-            }
-        }
-    }
-}
-
-static void drawTextPixelScaled(u16* fb, int x, int y, const char* text, u16 color, int scale) {
-    if (scale <= 1) {
-        drawTextPixel(fb, x, y, text, color);
-        return;
-    }
-
-    static const unsigned char glyphs[][5] = {
-        {0,0,0,0,0}, {31,17,17,17,17}, {31,21,21,10,0}, {14,17,17,17,0}, {31,17,17,14,0},
-        {31,21,21,17,0}, {31,20,20,16,0}, {14,17,19,15,0}, {31,4,4,31,0}, {17,31,17,0,0},
-        {1,1,17,30,0}, {31,4,10,17,0}, {31,1,1,1,0}, {31,12,3,12,31}, {31,8,4,2,31},
-        {14,17,17,14,0}, {31,20,20,8,0}, {14,17,19,15,1}, {31,20,22,9,0}, {9,21,21,18,0},
-        {16,31,16,0,0}, {30,1,1,30,0}, {28,2,1,2,28}, {30,1,6,1,30}, {17,10,4,10,17},
-        {24,4,3,4,24}, {19,21,25,17,0}, {14,19,21,25,14}, {0,17,31,1,0}, {19,21,21,21,9},
-        {17,21,21,21,10}, {28,4,4,31,4}, {29,21,21,21,18}, {14,21,21,21,2}, {16,23,24,20,16},
-        {10,21,21,21,10}, {8,21,21,21,14}
-    };
-
-    auto glyphIndex = [](char c) -> int {
-        if (c == ' ') return 0;
-        if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-        if (c >= '0' && c <= '9') return 27 + (c - '0');
-        return 0;
-    };
-
-    for (int i = 0; text[i]; ++i) {
-        int gi = glyphIndex(text[i]);
-        for (int col = 0; col < 5; ++col) {
-            unsigned char bits = glyphs[gi][col];
-            for (int row = 0; row < 5; ++row) {
-                if (bits & (1 << (4 - row))) {
-                    drawRect(fb, x + i * 6 * scale + col * scale, y + row * scale, scale, scale, color);
                 }
             }
         }
@@ -433,7 +299,34 @@ void initRenderer() {
     std::memset(gTopFb, 0, 256 * 256 * sizeof(u16));
     std::memset(gBottomFb, 0, 256 * 256 * sizeof(u16));
 
-    rebuildProjectionTables();
+    const float aspect = (float)RENDER_W / (float)RENDER_H;
+    for (int x = 0; x < RENDER_W; ++x) {
+        float nx = ((x + 0.5f) / (float)RENDER_W) * 2.0f - 1.0f;
+        gNx[x] = nx * aspect * FOV;
+    }
+    for (int y = 0; y < RENDER_H; ++y) {
+        float ny = ((y + 0.5f) / (float)RENDER_H) * 2.0f - 1.0f;
+        gNy[y] = ny * FOV;
+    }
+    for (int y = 0; y < RENDER_H; ++y) {
+        const float ny = gNy[y];
+        for (int x = 0; x < RENDER_W; ++x) {
+            const float nx = gNx[x];
+            gInvLen[y][x] = 1.0f / sqrtf(nx * nx + ny * ny + 1.0f);
+        }
+    }
+    for (int x = 0; x < SCREEN_W; ++x) gXMap[x] = (x * RENDER_W) / SCREEN_W;
+    for (int y = 0; y < SCREEN_H; ++y) gYMap[y] = (y * RENDER_H) / SCREEN_H;
+
+    for (int py = 0; py < RENDER_H; ++py) {
+        if (py < RENDER_H / 2) {
+            int band = 10 + py / 4;
+            gSkyColor[py] = rgb15(4 + band / 4, 10 + band / 3, 18 + band / 2);
+        } else {
+            int band = py - RENDER_H / 2;
+            gGroundColor[py] = rgb15(4 + band / 4, 8 + band / 5, 4 + band / 6);
+        }
+    }
 
     gMapVisible = false;
     gHudStaticValid = false;
@@ -448,37 +341,19 @@ void initRenderer() {
     gLastMenuLogoW = 0;
     gLastMenuLogoH = 0;
     gLastLoadingProgress = -1;
-    gLastGraphicsSlider = -1;
 }
 
-
-int getRenderWidth() { return gRenderW; }
-int getRenderHeight() { return gRenderH; }
-
-void setRenderResolution(int width, int height) {
-    if (width < MIN_RENDER_W) width = MIN_RENDER_W;
-    if (width > MAX_RENDER_W) width = MAX_RENDER_W;
-    if (height < MIN_RENDER_H) height = MIN_RENDER_H;
-    if (height > MAX_RENDER_H) height = MAX_RENDER_H;
-    if (width == gRenderW && height == gRenderH) return;
-    gRenderW = width;
-    gRenderH = height;
-    rebuildProjectionTables();
-    gLastWorldRevision3D = -1;
-    gLastYaw = 9999.0f;
-    gLastPitch = 9999.0f;
-    gLastX = 9999.0f;
-    gLastY = 9999.0f;
-    gLastZ = 9999.0f;
-}
-
-static RayHit castRayFrom(float ox, float oy, float oz, float dirX, float dirY, float dirZ, float maxDist) {
+static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
     RayHit hit{};
     hit.hit = false;
     hit.dist = maxDist;
-    hit.placeX = (int)std::floor(ox);
-    hit.placeY = (int)std::floor(oy);
-    hit.placeZ = (int)std::floor(oz);
+    hit.placeX = (int)std::floor(p.x);
+    hit.placeY = (int)std::floor(p.y + EYE_HEIGHT);
+    hit.placeZ = (int)std::floor(p.z);
+
+    float ox = p.x;
+    float oy = p.y + EYE_HEIGHT;
+    float oz = p.z;
 
     int mapX = (int)std::floor(ox);
     int mapY = (int)std::floor(oy);
@@ -544,10 +419,6 @@ static RayHit castRayFrom(float ox, float oy, float oz, float dirX, float dirY, 
     return hit;
 }
 
-static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
-    return castRayFrom(p.x, p.y + EYE_HEIGHT, p.z, dirX, dirY, dirZ, maxDist);
-}
-
 RayHit castCenterRay(const Player& p, float maxDist) {
     float cp = std::cosf(p.pitch);
     float dirX = std::sinf(p.yaw) * cp;
@@ -607,20 +478,20 @@ void renderFrame(const Player& p) {
     const float sp = std::sinf(p.pitch);
     const float cy = std::cosf(p.yaw);
     const float sy = std::sinf(p.yaw);
-    float dirXCol[MAX_RENDER_W];
-    float dirZCol[MAX_RENDER_W];
-    for (int px = 0; px < gRenderW; ++px) {
+    float dirXCol[RENDER_W];
+    float dirZCol[RENDER_W];
+    for (int px = 0; px < RENDER_W; ++px) {
         const float nx = gNx[px];
         dirXCol[px] = sy * cp + cy * nx;
         dirZCol[px] = cy * cp - sy * nx;
     }
 
     const float eyeY = p.y + EYE_HEIGHT;
-    for (int py = 0; py < gRenderH; ++py) {
+    for (int py = 0; py < RENDER_H; ++py) {
         const float ny = gNy[py];
         const float dirYBase = sp - ny;
         u16* dstRow = gLowRes[py];
-        for (int px = 0; px < gRenderW; ++px) {
+        for (int px = 0; px < RENDER_W; ++px) {
             const float invLen = gInvLen[py][px];
             const float dirX = dirXCol[px] * invLen;
             const float dirY = dirYBase * invLen;
@@ -633,30 +504,29 @@ void renderFrame(const Player& p) {
                 const float hx = p.x + dirX * hit.dist;
                 const float hy = eyeY + dirY * hit.dist;
                 const float hz = p.z + dirZ * hit.dist;
-                u16 texel = sampleHitTexture(p, hit, dirX, dirY, dirZ, eyeY);
-                int fog = (int)(hit.dist * 2.0f);
-
-                if (hit.block == BLOCK_GLASS) {
-                    const float eps = 0.035f;
-                    const float remain = MAX_RAY_DIST - hit.dist - eps;
-                    u16 behind = (py < gRenderH / 2) ? gSkyColor[py] : gGroundColor[py];
-                    if (remain > 0.0f) {
-                        RayHit nextHit = castRayFrom(hx + dirX * eps, hy + dirY * eps, hz + dirZ * eps, dirX, dirY, dirZ, remain);
-                        if (nextHit.hit) {
-                            Player p2 = p; p2.x = hx + dirX * eps; p2.y = hy + dirY * eps - EYE_HEIGHT; p2.z = hz + dirZ * eps; behind = shadeHitTexture(p2, nextHit, dirX, dirY, dirZ, p2.y + EYE_HEIGHT, false);
-                        }
-                    }
-                    if (texel == 0) {
-                        color = behind;
-                    } else {
-                        u16 pane = shadeColor(texel, hit.face, hl, fog / 2);
-                        color = blendColor50(pane, behind);
-                    }
+                float u = 0.0f;
+                float v = 0.0f;
+                bool topFace = false;
+                if (hit.face == 0) {
+                    u = hz - floorf(hz);
+                    v = hy - floorf(hy);
+                } else if (hit.face == 1) {
+                    u = hx - floorf(hx);
+                    v = hz - floorf(hz);
+                    topFace = (dirY < 0.0f);
                 } else {
-                    color = shadeColor(texel, hit.face, hl, fog);
+                    u = hx - floorf(hx);
+                    v = hy - floorf(hy);
+                }
+                const u16* tex = textureForBlockFace(hit.block, hit.face, topFace);
+                color = sampleTexture(tex, u, v);
+                int fog = (int)(hit.dist * 2.0f);
+                color = shadeColor(color, hit.face, hl, fog);
+                if (hit.block == BLOCK_GLASS) {
+                    color = shadeColor(rgb15(22, 24, 26), hit.face, hl, fog / 2);
                 }
             } else {
-                color = (py < gRenderH / 2) ? gSkyColor[py] : gGroundColor[py];
+                color = (py < RENDER_H / 2) ? gSkyColor[py] : gGroundColor[py];
             }
             dstRow[px] = color;
         }
@@ -668,13 +538,9 @@ void renderFrame(const Player& p) {
         for (int x = 0; x < SCREEN_W; ++x) dst[x] = src[gXMap[x]];
     }
 
-    const int cx = SCREEN_W / 2;
-    const int crossY = SCREEN_H / 2;
-    for (int y = crossY - 3; y <= crossY + 3; ++y) {
-        gTopFb[y * 256 + cx] = rgb15(31, 31, 31);
-    }
-    u16* midRow = gTopFb + crossY * 256;
-    for (int x = cx - 3; x <= cx + 3; ++x) midRow[x] = rgb15(31, 31, 31);
+    for (int y = 0; y < SCREEN_H; ++y) gTopFb[y * 256 + SCREEN_W / 2] = rgb15(31, 31, 31);
+    u16* midRow = gTopFb + (SCREEN_H / 2) * 256;
+    for (int x = SCREEN_W / 2 - 3; x <= SCREEN_W / 2 + 3; ++x) midRow[x] = rgb15(31, 31, 31);
 
     gLastYaw = p.yaw;
     gLastPitch = p.pitch;
@@ -787,18 +653,23 @@ static void beginMenuScreen(MenuCacheScreen screen) {
     gLastMenuLogoW = 0;
     gLastMenuLogoH = 0;
     gLastLoadingProgress = -1;
-    gLastGraphicsSlider = -1;
     for (int y = 0; y < 192; ++y) {
         std::memcpy(gMenuTopBase[y], MENU_BG + y * 256, 256 * sizeof(u16));
         std::memcpy(gMenuBottomBase[y], MENU_BG + y * 256, 256 * sizeof(u16));
     }
 }
 
-static void drawAnimatedMenuLogo(int /*animTick*/, int baseW, int /*amplitude*/, int baseY) {
-    const int logoW = baseW;
-    const int logoH = (MENU_LOGO_H * logoW) / MENU_LOGO_W;
-    const int logoX = (256 - logoW) / 2;
-    const int logoY = baseY;
+static void drawAnimatedMenuLogo(int animTick, int baseW, int amplitude, int baseY) {
+    int pulse = ((animTick / 2) % 32);
+    if (pulse > 16) pulse = 32 - pulse;
+    int logoW = baseW + pulse * amplitude;
+    int logoH = (MENU_LOGO_H * logoW) / MENU_LOGO_W;
+    int logoX = (256 - logoW) / 2;
+    int logoY = baseY + pulse / 2;
+
+    if (gLastMenuLogoW > 0 && gLastMenuLogoH > 0) {
+        restoreRectFromBase(gTopFb, &gMenuTopBase[0][0], gLastMenuLogoX - 2, gLastMenuLogoY - 2, gLastMenuLogoW + 4, gLastMenuLogoH + 4);
+    }
 
     blitImage(gTopFb, logoX, logoY, logoW, logoH, MENU_LOGO, MENU_LOGO_W, MENU_LOGO_H, true);
     gLastMenuLogoX = logoX;
@@ -807,96 +678,27 @@ static void drawAnimatedMenuLogo(int /*animTick*/, int baseW, int /*amplitude*/,
     gLastMenuLogoH = logoH;
 }
 
-
-static void drawButtonText(u16* fb, int x, int y, int w, int h, const char* text) {
-    drawRect(fb, x, y, w, h, rgb15(9, 9, 12));
-    drawRect(fb, x + 2, y + 2, w - 4, h - 4, rgb15(4, 4, 6));
-    drawRect(fb, x + 4, y + 4, w - 8, h - 8, rgb15(12, 12, 15));
-    int textW = 0;
-    for (const char* p = text; *p; ++p) ++textW;
-    const int scale = 2;
-    const int pixelW = textW * 6 * scale - scale;
-    const int pixelH = 5 * scale;
-    drawTextPixelScaled(fb, x + (w - pixelW) / 2, y + (h - pixelH) / 2, text, rgb15(31, 31, 31), scale);
-}
-
-static void drawSliderBar(u16* fb, int x, int y, int w, int h, int value) {
-    if (value < 0) value = 0;
-    if (value > 100) value = 100;
-    drawRect(fb, x, y, w, h, rgb15(6, 6, 8));
-    drawRect(fb, x + 2, y + 2, w - 4, h - 4, rgb15(1, 1, 2));
-    int fill = ((w - 8) * value) / 100;
-    drawRect(fb, x + 4, y + 4, fill, h - 8, rgb15(7, 18, 28));
-    int knobX = x + 4 + fill - 4;
-    if (knobX < x + 2) knobX = x + 2;
-    if (knobX > x + w - 10) knobX = x + w - 10;
-    drawRect(fb, knobX, y + 1, 8, h - 2, rgb15(31, 31, 31));
-}
-
-static void drawRenderSizeLabel(u16* fb, int x, int y) {
-    char line[32];
-    std::snprintf(line, sizeof(line), "%d X %d", gRenderW, gRenderH);
-    drawTextPixel(fb, x, y, line, rgb15(31, 31, 31));
-}
-
 void renderTitleMenu(int animTick) {
-    (void)animTick;
     beginMenuScreen(MENU_CACHE_TITLE);
-    if (gLastMenuLogoX != -1) return;
 
-    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
-    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+    if (gLastMenuLogoW <= 0) {
+        std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
+        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
 
-    const int bw = 176;
-    const int bh = 34;
-    const int bx = (256 - bw) / 2;
-    drawButton(gBottomFb, bx, 46, bw, bh, TITLE_NEW_GAME, TITLE_NEW_GAME_W, TITLE_NEW_GAME_H);
-    drawButton(gBottomFb, bx, 88, bw, bh, TITLE_LOAD_GAME, TITLE_LOAD_GAME_W, TITLE_LOAD_GAME_H);
-    drawButtonText(gBottomFb, bx, 130, bw, bh, "OPTIONS");
+        const int bw = 176;
+        const int bh = 42;
+        const int bx = (256 - bw) / 2;
+        drawButton(gBottomFb, bx, 62, bw, bh, TITLE_NEW_GAME, TITLE_NEW_GAME_W, TITLE_NEW_GAME_H);
+        drawButton(gBottomFb, bx, 118, bw, bh, TITLE_LOAD_GAME, TITLE_LOAD_GAME_W, TITLE_LOAD_GAME_H);
+    }
 
-    drawAnimatedMenuLogo(0, 180, 0, 18);
-}
-
-
-void renderOptionsMenu() {
-    beginMenuScreen(MENU_CACHE_OPTIONS);
-    if (gLastMenuLogoX != -1) return;
-
-    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
-    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
-
-    drawTextPixelScaled(gBottomFb, 83, 20, "OPTIONS", rgb15(31, 31, 31), 2);
-    drawButtonText(gBottomFb, 68, 58, 120, 34, "GRAPHICS");
-    drawButtonText(gBottomFb, 14, 148, 82, 28, "BACK");
-    blitImage(gTopFb, (256 - MENU_LOGO_W) / 2, 26, MENU_LOGO_W, MENU_LOGO_H, MENU_LOGO, MENU_LOGO_W, MENU_LOGO_H, true);
-    gLastMenuLogoX = 0;
-}
-
-void renderGraphicsMenu() {
-    beginMenuScreen(MENU_CACHE_GRAPHICS);
-    const int sliderValue = graphicsSliderValue();
-    if (gLastMenuLogoX != -1 && gLastGraphicsSlider == sliderValue) return;
-
-    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
-    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
-
-    drawTextPixelScaled(gBottomFb, 77, 16, "GRAPHICS", rgb15(31, 31, 31), 2);
-    drawTextPixelScaled(gBottomFb, 31, 50, "RESOLUTION", rgb15(31, 31, 31), 2);
-    drawSliderBar(gBottomFb, 34, 78, 188, 22, sliderValue);
-    drawRenderSizeLabel(gBottomFb, 94, 112);
-    drawTextPixel(gBottomFb, 24, 128, "FASTER", rgb15(26, 26, 26));
-    drawTextPixel(gBottomFb, 166, 128, "SHARPER", rgb15(26, 26, 26));
-    drawButtonText(gBottomFb, 14, 148, 82, 28, "BACK");
-    blitImage(gTopFb, (256 - MENU_LOGO_W) / 2, 26, MENU_LOGO_W, MENU_LOGO_H, MENU_LOGO, MENU_LOGO_W, MENU_LOGO_H, true);
-    gLastMenuLogoX = 0;
-    gLastGraphicsSlider = sliderValue;
+    drawAnimatedMenuLogo(animTick, 180, 2, 18);
 }
 
 void renderLoadingScreen(int progress, int animTick) {
-    (void)animTick;
     beginMenuScreen(MENU_CACHE_LOADING);
 
-    if (gLastMenuLogoX == -1) {
+    if (gLastMenuLogoW <= 0) {
         std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
         std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
         blitImage(gBottomFb, (256 - LABEL_LOADING_W) / 2, 48, LABEL_LOADING_W, LABEL_LOADING_H, LABEL_LOADING, LABEL_LOADING_W, LABEL_LOADING_H, true);
@@ -907,8 +709,9 @@ void renderLoadingScreen(int progress, int animTick) {
         const int barH = 20;
         drawRect(gBottomFb, barX, barY, barW, barH, rgb15(5, 5, 7));
         drawRect(gBottomFb, barX + 2, barY + 2, barW - 4, barH - 4, rgb15(1, 1, 2));
-        drawAnimatedMenuLogo(0, 156, 0, 16);
     }
+
+    drawAnimatedMenuLogo(animTick, 156, 1, 16);
 
     if (progress != gLastLoadingProgress) {
         const int barX = 28;
@@ -925,48 +728,25 @@ void renderLoadingScreen(int progress, int animTick) {
 void renderPauseMenu() {
     beginMenuScreen(MENU_CACHE_PAUSE);
 
-    if (gLastMenuLogoX != -1) return;
-
-    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
-    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
-    blitImage(gBottomFb, (256 - LABEL_PAUSED_W) / 2, 18, LABEL_PAUSED_W, LABEL_PAUSED_H, LABEL_PAUSED, LABEL_PAUSED_W, LABEL_PAUSED_H, true);
-    const int bw = 176;
-    const int bh = 34;
-    const int bx = (256 - bw) / 2;
-    drawButton(gBottomFb, bx, 52, bw, bh, PAUSE_RESUME, PAUSE_RESUME_W, PAUSE_RESUME_H);
-    drawButton(gBottomFb, bx, 94, bw, bh, PAUSE_SAVE_GAME, PAUSE_SAVE_GAME_W, PAUSE_SAVE_GAME_H);
-    drawButton(gBottomFb, bx, 136, bw, bh, PAUSE_QUIT_GAME, PAUSE_QUIT_GAME_W, PAUSE_QUIT_GAME_H);
-    gLastMenuLogoX = 0;
+    if (gMenuCacheScreen == MENU_CACHE_PAUSE && gLastMenuLogoX == -1) {
+        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+        blitImage(gBottomFb, (256 - LABEL_PAUSED_W) / 2, 18, LABEL_PAUSED_W, LABEL_PAUSED_H, LABEL_PAUSED, LABEL_PAUSED_W, LABEL_PAUSED_H, true);
+        const int bw = 176;
+        const int bh = 34;
+        const int bx = (256 - bw) / 2;
+        drawButton(gBottomFb, bx, 52, bw, bh, PAUSE_RESUME, PAUSE_RESUME_W, PAUSE_RESUME_H);
+        drawButton(gBottomFb, bx, 94, bw, bh, PAUSE_SAVE_GAME, PAUSE_SAVE_GAME_W, PAUSE_SAVE_GAME_H);
+        drawButton(gBottomFb, bx, 136, bw, bh, PAUSE_QUIT_GAME, PAUSE_QUIT_GAME_W, PAUSE_QUIT_GAME_H);
+        gLastMenuLogoX = 0;
+    }
 }
 
 int handleTitleMenuTouch(int x, int y) {
     const int bw = 176;
-    const int bh = 34;
+    const int bh = 42;
     const int bx = (256 - bw) / 2;
-    if (buttonHit(x, y, bx, 46, bw, bh)) return MENU_ACTION_NEW_GAME;
-    if (buttonHit(x, y, bx, 88, bw, bh)) return MENU_ACTION_LOAD_GAME;
-    if (buttonHit(x, y, bx, 130, bw, bh)) return MENU_ACTION_OPTIONS;
-    return MENU_ACTION_NONE;
-}
-
-
-int handleOptionsMenuTouch(int x, int y) {
-    if (buttonHit(x, y, 68, 58, 120, 34)) return MENU_ACTION_OPEN_GRAPHICS;
-    if (buttonHit(x, y, 14, 148, 82, 28)) return MENU_ACTION_BACK;
-    return MENU_ACTION_NONE;
-}
-
-int handleGraphicsMenuTouch(int x, int y) {
-    if (buttonHit(x, y, 14, 148, 82, 28)) return MENU_ACTION_BACK;
-    if (x >= 34 && x < 222 && y >= 78 && y < 100) {
-        int slider = ((x - 34) * 100) / 187;
-        if (slider < 0) slider = 0;
-        if (slider > 100) slider = 100;
-        int width = MIN_RENDER_W + ((MAX_RENDER_W - MIN_RENDER_W) * slider + 50) / 100;
-        int height = MIN_RENDER_H + ((MAX_RENDER_H - MIN_RENDER_H) * slider + 50) / 100;
-        setRenderResolution(width, height);
-        return MENU_ACTION_NONE;
-    }
+    if (buttonHit(x, y, bx, 62, bw, bh)) return MENU_ACTION_NEW_GAME;
+    if (buttonHit(x, y, bx, 118, bw, bh)) return MENU_ACTION_LOAD_GAME;
     return MENU_ACTION_NONE;
 }
 

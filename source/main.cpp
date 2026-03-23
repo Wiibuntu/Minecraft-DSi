@@ -22,6 +22,8 @@ static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlace
 
 enum GameModeState {
     STATE_TITLE = 0,
+    STATE_OPTIONS,
+    STATE_GRAPHICS,
     STATE_LOADING,
     STATE_PLAYING,
     STATE_PAUSED
@@ -60,7 +62,6 @@ int main() {
     u32 pendingSeed = 0;
 
     while (1) {
-        swiWaitForVBlank();
         scanKeys();
         int held = keysHeld();
         int down = keysDown();
@@ -75,9 +76,42 @@ int main() {
                     pendingSeed = nextRandomSeed();
                     beginWorldGeneration(pendingSeed);
                     state = STATE_LOADING;
+                } else if (action == MENU_ACTION_OPTIONS) {
+                    state = STATE_OPTIONS;
                 }
             }
             renderTitleMenu(animTick);
+            swiWaitForVBlank();
+            continue;
+        }
+
+        if (state == STATE_OPTIONS) {
+            if (down & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
+                int action = handleOptionsMenuTouch(touch.px, touch.py);
+                if (action == MENU_ACTION_OPEN_GRAPHICS) {
+                    state = STATE_GRAPHICS;
+                } else if (action == MENU_ACTION_BACK) {
+                    state = STATE_TITLE;
+                }
+            }
+            renderOptionsMenu();
+            swiWaitForVBlank();
+            continue;
+        }
+
+        if (state == STATE_GRAPHICS) {
+            if ((held | down) & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
+                int action = handleGraphicsMenuTouch(touch.px, touch.py);
+                if ((down & KEY_TOUCH) && action == MENU_ACTION_BACK) {
+                    state = STATE_OPTIONS;
+                }
+            }
+            renderGraphicsMenu();
+            swiWaitForVBlank();
             continue;
         }
 
@@ -89,6 +123,7 @@ int main() {
                 player.selectedBlock = BLOCK_GRASS;
                 state = STATE_PLAYING;
             }
+            swiWaitForVBlank();
             continue;
         }
 
@@ -107,12 +142,14 @@ int main() {
                 }
             }
             renderPauseMenu();
+            swiWaitForVBlank();
             continue;
         }
 
         if (down & KEY_START) {
             state = STATE_PAUSED;
             renderPauseMenu();
+            swiWaitForVBlank();
             continue;
         }
 
@@ -140,6 +177,7 @@ int main() {
 
         renderFrame(player);
         renderHUD(player, hit);
+        swiWaitForVBlank();
     }
 
     return 0;

@@ -31,6 +31,9 @@ enum MenuAction {
     MENU_ACTION_NONE = 0,
     MENU_ACTION_NEW_GAME,
     MENU_ACTION_LOAD_GAME,
+    MENU_ACTION_OPTIONS,
+    MENU_ACTION_OPEN_GRAPHICS,
+    MENU_ACTION_BACK,
     MENU_ACTION_RESUME,
     MENU_ACTION_SAVE_GAME,
     MENU_ACTION_QUIT_TO_TITLE
@@ -47,3 +50,11 @@ void renderLoadingScreen(int progress, int animTick);
 void renderPauseMenu();
 int handleTitleMenuTouch(int x, int y);
 int handlePauseMenuTouch(int x, int y);
+
+void renderOptionsMenu();
+void renderGraphicsMenu();
+int handleOptionsMenuTouch(int x, int y);
+int handleGraphicsMenuTouch(int x, int y);
+int getRenderWidth();
+int getRenderHeight();
+void setRenderResolution(int width, int height);
