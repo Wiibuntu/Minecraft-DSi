@@ -1,7 +1,7 @@
 
 # MC DSi Prototype
 
-This is a minimal Nintendo DSi prototype scaffold intended as the first stage of a MinecraftConsoles-inspired handheld port.
+This is a minimal Nintendo DSi port of Minecaft Legacy Edition
 
 ## Requirements
 
@@ -13,17 +13,7 @@ This is a minimal Nintendo DSi prototype scaffold intended as the first stage of
 
 ## Build
 
-```bash
-export DEVKITPRO=/opt/devkitpro
-export DEVKITARM=$DEVKITPRO/devkitARM
-make SPECS='/opt/devkitpro/calico/share/ds9.specs'
-```
-
-If your setup does not use Calico specs, you can usually just run:
-
-```bash
-make
-```
+Simple. Run buildrom.sh.
 
 ## Controls
 
