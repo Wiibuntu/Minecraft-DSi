@@ -31,15 +31,6 @@ This package was patched to include the Calico header root automatically when pr
 
 That fixes builds where `libnds/include/nds.h` includes `<calico.h>`.
 
-## March 2026 UI / block update
-
-- Bottom screen map is now toggleable with a touch button in the top-right corner instead of always visible.
-- Bottom screen now shows an expanded placeable block palette.
-- Added additional basic block IDs for building: cobblestone, planks, brick, and glass.
-- Uploaded font asset is staged at `assets/fonts/Minecraft.ttf` for future button/text work.
-- Current button label rendering uses a lightweight built-in pixel routine for compatibility with the existing libnds-only build.
-
-
 ## Texture workflow
 
 This DSi port now auto-generates `source/texture_data.cpp` from the PNG files found in `textures/` every time you run `make`.
