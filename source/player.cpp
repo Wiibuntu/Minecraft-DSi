@@ -28,9 +28,7 @@ static bool collidesAt(float x, float y, float z) {
 }
 
 void initPlayer(Player& p) {
-    p.x = 8.5f;
-    p.z = 8.5f;
-    p.y = 7.0f;
+    getSpawnPosition(p.x, p.y, p.z);
     p.yaw = 0.0f;
     p.pitch = -0.08f;
     p.vy = 0.0f;

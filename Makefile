@@ -23,14 +23,14 @@ include $(DEVKITARM)/ds_rules
 #---------------------------------------------------------------------------------
 # Project settings
 #---------------------------------------------------------------------------------
-TARGET   := mc_dsi_proto
+TARGET   := Minecraft
 BUILD    := build
 SOURCES  := source
 INCLUDES := include build
 DATA     :=
 GRAPHICS :=
 AUDIO    :=
-ICON     :=
+ICON     := icon.bmp
 NITRO    :=
 
 #---------------------------------------------------------------------------------
@@ -83,10 +83,18 @@ export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 # Critical for ds_rules: explicit linker search paths.
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-.PHONY: all clean $(BUILD)
+.PHONY: all clean $(BUILD) gen_textures gen_menu_assets
 
-all: $(BUILD)
+all: gen_textures gen_menu_assets $(BUILD)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+gen_textures:
+	@echo Generating texture data from textures/*.png ...
+	@python3 $(CURDIR)/tools/generate_texture_data.py
+
+gen_menu_assets:
+	@echo Generating menu assets from bg/logo/font ...
+	@python3 $(CURDIR)/tools/generate_menu_assets.py
 
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@

@@ -22,6 +22,12 @@ static const int WORLD_Y = 16;
 static const int WORLD_Z = 32;
 
 void initWorld();
+void beginWorldGeneration(u32 seed);
+bool generateWorldStep(int columnsPerStep);
+int getWorldGenProgress();
+u32 getWorldSeed();
+void getSpawnPosition(float& x, float& y, float& z);
+
 int getBlock(int x, int y, int z);
 void setBlock(int x, int y, int z, int block);
 bool isSolidBlock(int x, int y, int z);

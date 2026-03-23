@@ -20,6 +20,13 @@ static const int kPlaceableBlocks[] = {
 
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
 
+enum GameModeState {
+    STATE_TITLE = 0,
+    STATE_LOADING,
+    STATE_PLAYING,
+    STATE_PAUSED
+};
+
 static int selectedIndexFromBlock(int block) {
     for (int i = 0; i < kPlaceableBlockCount; ++i) {
         if (kPlaceableBlocks[i] == block) return i;
@@ -33,25 +40,83 @@ static void changeSelectedBlock(Player& p, int delta) {
     p.selectedBlock = kPlaceableBlocks[idx];
 }
 
+static u32 nextRandomSeed() {
+    static u32 seed = 0x13579BDFu;
+    seed = seed * 1664525u + 1013904223u + (u32)REG_VCOUNT;
+    return seed ^ ((u32)keysHeld() << 16) ^ (u32)keysDown();
+}
+
 int main() {
     irqEnable(IRQ_VBLANK);
 
     initRenderer();
-    initWorld();
 
     Player player;
     initPlayer(player);
     player.selectedBlock = BLOCK_GRASS;
+
+    GameModeState state = STATE_TITLE;
+    int animTick = 0;
+    u32 pendingSeed = 0;
 
     while (1) {
         swiWaitForVBlank();
         scanKeys();
         int held = keysHeld();
         int down = keysDown();
+        ++animTick;
 
-        if (down & KEY_START) changeSelectedBlock(player, +1);
+        if (state == STATE_TITLE) {
+            if (down & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
+                int action = handleTitleMenuTouch(touch.px, touch.py);
+                if (action == MENU_ACTION_NEW_GAME) {
+                    pendingSeed = nextRandomSeed();
+                    beginWorldGeneration(pendingSeed);
+                    state = STATE_LOADING;
+                }
+            }
+            renderTitleMenu(animTick);
+            continue;
+        }
+
+        if (state == STATE_LOADING) {
+            bool done = generateWorldStep(24);
+            renderLoadingScreen(getWorldGenProgress(), animTick);
+            if (done) {
+                initPlayer(player);
+                player.selectedBlock = BLOCK_GRASS;
+                state = STATE_PLAYING;
+            }
+            continue;
+        }
+
+        if (state == STATE_PAUSED) {
+            if (down & KEY_START) {
+                state = STATE_PLAYING;
+            }
+            if (down & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
+                int action = handlePauseMenuTouch(touch.px, touch.py);
+                if (action == MENU_ACTION_RESUME) {
+                    state = STATE_PLAYING;
+                } else if (action == MENU_ACTION_QUIT_TO_TITLE) {
+                    state = STATE_TITLE;
+                }
+            }
+            renderPauseMenu();
+            continue;
+        }
+
+        if (down & KEY_START) {
+            state = STATE_PAUSED;
+            renderPauseMenu();
+            continue;
+        }
+
         if (down & KEY_SELECT) changeSelectedBlock(player, -1);
-
         if (down & KEY_TOUCH) {
             touchPosition touch;
             touchRead(&touch);

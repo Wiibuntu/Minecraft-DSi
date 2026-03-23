@@ -1,5 +1,6 @@
 #include "render.h"
 #include "texture_data.h"
+#include "menu_assets.h"
 #include "world.h"
 
 #include <nds.h>
@@ -56,6 +57,23 @@ static float gLastPitch = 9999.0f;
 static float gLastX = 9999.0f;
 static float gLastY = 9999.0f;
 static float gLastZ = 9999.0f;
+
+static u16 gMenuTopBase[192][256];
+static u16 gMenuBottomBase[192][256];
+
+enum MenuCacheScreen {
+    MENU_CACHE_NONE = 0,
+    MENU_CACHE_TITLE,
+    MENU_CACHE_LOADING,
+    MENU_CACHE_PAUSE
+};
+
+static MenuCacheScreen gMenuCacheScreen = MENU_CACHE_NONE;
+static int gLastMenuLogoX = -1;
+static int gLastMenuLogoY = -1;
+static int gLastMenuLogoW = 0;
+static int gLastMenuLogoH = 0;
+static int gLastLoadingProgress = -1;
 
 static inline u16 rgb15(int r, int g, int b) {
     return RGB15(r, g, b) | BIT(15);
@@ -317,6 +335,12 @@ void initRenderer() {
     gFrameCounter = 0;
     gHudFrameCounter = 0;
     gLastWorldRevision3D = -1;
+    gMenuCacheScreen = MENU_CACHE_NONE;
+    gLastMenuLogoX = -1;
+    gLastMenuLogoY = -1;
+    gLastMenuLogoW = 0;
+    gLastMenuLogoH = 0;
+    gLastLoadingProgress = -1;
 }
 
 static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
@@ -571,4 +595,167 @@ void renderHUD(const Player& p, const RayHit& hit) {
 
     std::memcpy(gHudFrame, gBottomFb, 192 * 256 * sizeof(u16));
     gHudFrameValid = true;
+}
+
+
+static void blitImage(u16* fb, int dx, int dy, int dw, int dh, const unsigned short* src, int sw, int sh, bool transparent) {
+    if (dw <= 0 || dh <= 0) return;
+    for (int y = 0; y < dh; ++y) {
+        int sy = (y * sh) / dh;
+        int py = dy + y;
+        if (py < 0 || py >= 192) continue;
+        u16* row = fb + py * 256;
+        for (int x = 0; x < dw; ++x) {
+            int sx = (x * sw) / dw;
+            int px = dx + x;
+            if (px < 0 || px >= 256) continue;
+            u16 c = src[sy * sw + sx];
+            if (transparent && c == 0) continue;
+            row[px] = c;
+        }
+    }
+}
+
+static void drawButton(u16* fb, int x, int y, int w, int h, const unsigned short* label, int labelW, int labelH) {
+    drawRect(fb, x, y, w, h, rgb15(9, 9, 12));
+    drawRect(fb, x + 2, y + 2, w - 4, h - 4, rgb15(4, 4, 6));
+    drawRect(fb, x + 4, y + 4, w - 8, h - 8, rgb15(12, 12, 15));
+    blitImage(fb, x + (w - labelW) / 2, y + (h - labelH) / 2, labelW, labelH, label, labelW, labelH, true);
+}
+
+static int buttonHit(int x, int y, int bx, int by, int bw, int bh) {
+    return x >= bx && x < bx + bw && y >= by && y < by + bh;
+}
+
+static void restoreRectFromBase(u16* fb, const u16* base, int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > 256) w = 256 - x;
+    if (y + h > 192) h = 192 - y;
+    if (w <= 0 || h <= 0) return;
+    for (int py = 0; py < h; ++py) {
+        std::memcpy(fb + (y + py) * 256 + x, base + (y + py) * 256 + x, w * sizeof(u16));
+    }
+}
+
+static void beginMenuScreen(MenuCacheScreen screen) {
+    if (gMenuCacheScreen == screen) return;
+    gMenuCacheScreen = screen;
+    gLastMenuLogoX = -1;
+    gLastMenuLogoY = -1;
+    gLastMenuLogoW = 0;
+    gLastMenuLogoH = 0;
+    gLastLoadingProgress = -1;
+    for (int y = 0; y < 192; ++y) {
+        std::memcpy(gMenuTopBase[y], MENU_BG + y * 256, 256 * sizeof(u16));
+        std::memcpy(gMenuBottomBase[y], MENU_BG + y * 256, 256 * sizeof(u16));
+    }
+}
+
+static void drawAnimatedMenuLogo(int animTick, int baseW, int amplitude, int baseY) {
+    int pulse = ((animTick / 2) % 32);
+    if (pulse > 16) pulse = 32 - pulse;
+    int logoW = baseW + pulse * amplitude;
+    int logoH = (MENU_LOGO_H * logoW) / MENU_LOGO_W;
+    int logoX = (256 - logoW) / 2;
+    int logoY = baseY + pulse / 2;
+
+    if (gLastMenuLogoW > 0 && gLastMenuLogoH > 0) {
+        restoreRectFromBase(gTopFb, &gMenuTopBase[0][0], gLastMenuLogoX - 2, gLastMenuLogoY - 2, gLastMenuLogoW + 4, gLastMenuLogoH + 4);
+    }
+
+    blitImage(gTopFb, logoX, logoY, logoW, logoH, MENU_LOGO, MENU_LOGO_W, MENU_LOGO_H, true);
+    gLastMenuLogoX = logoX;
+    gLastMenuLogoY = logoY;
+    gLastMenuLogoW = logoW;
+    gLastMenuLogoH = logoH;
+}
+
+void renderTitleMenu(int animTick) {
+    beginMenuScreen(MENU_CACHE_TITLE);
+
+    if (gLastMenuLogoW <= 0) {
+        std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
+        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+
+        const int bw = 176;
+        const int bh = 42;
+        const int bx = (256 - bw) / 2;
+        drawButton(gBottomFb, bx, 62, bw, bh, TITLE_NEW_GAME, TITLE_NEW_GAME_W, TITLE_NEW_GAME_H);
+        drawButton(gBottomFb, bx, 118, bw, bh, TITLE_LOAD_GAME, TITLE_LOAD_GAME_W, TITLE_LOAD_GAME_H);
+    }
+
+    drawAnimatedMenuLogo(animTick, 180, 2, 18);
+}
+
+void renderLoadingScreen(int progress, int animTick) {
+    beginMenuScreen(MENU_CACHE_LOADING);
+
+    if (gLastMenuLogoW <= 0) {
+        std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
+        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+        blitImage(gBottomFb, (256 - LABEL_LOADING_W) / 2, 48, LABEL_LOADING_W, LABEL_LOADING_H, LABEL_LOADING, LABEL_LOADING_W, LABEL_LOADING_H, true);
+
+        const int barX = 28;
+        const int barY = 98;
+        const int barW = 200;
+        const int barH = 20;
+        drawRect(gBottomFb, barX, barY, barW, barH, rgb15(5, 5, 7));
+        drawRect(gBottomFb, barX + 2, barY + 2, barW - 4, barH - 4, rgb15(1, 1, 2));
+    }
+
+    drawAnimatedMenuLogo(animTick, 156, 1, 16);
+
+    if (progress != gLastLoadingProgress) {
+        const int barX = 28;
+        const int barY = 98;
+        const int barW = 200;
+        const int barH = 20;
+        restoreRectFromBase(gBottomFb, &gMenuBottomBase[0][0], barX + 3, barY + 3, barW - 6, barH - 6);
+        int fill = ((barW - 6) * progress) / 100;
+        drawRect(gBottomFb, barX + 3, barY + 3, fill, barH - 6, rgb15(6, 24, 10));
+        gLastLoadingProgress = progress;
+    }
+}
+
+void renderPauseMenu() {
+    beginMenuScreen(MENU_CACHE_PAUSE);
+
+    if (gMenuCacheScreen == MENU_CACHE_PAUSE && gLastMenuLogoX == -1) {
+        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+        blitImage(gBottomFb, (256 - LABEL_PAUSED_W) / 2, 18, LABEL_PAUSED_W, LABEL_PAUSED_H, LABEL_PAUSED, LABEL_PAUSED_W, LABEL_PAUSED_H, true);
+        const int bw = 176;
+        const int bh = 34;
+        const int bx = (256 - bw) / 2;
+        drawButton(gBottomFb, bx, 52, bw, bh, PAUSE_RESUME, PAUSE_RESUME_W, PAUSE_RESUME_H);
+        drawButton(gBottomFb, bx, 94, bw, bh, PAUSE_SAVE_GAME, PAUSE_SAVE_GAME_W, PAUSE_SAVE_GAME_H);
+        drawButton(gBottomFb, bx, 136, bw, bh, PAUSE_QUIT_GAME, PAUSE_QUIT_GAME_W, PAUSE_QUIT_GAME_H);
+        gLastMenuLogoX = 0;
+    }
+}
+
+int handleTitleMenuTouch(int x, int y) {
+    const int bw = 176;
+    const int bh = 42;
+    const int bx = (256 - bw) / 2;
+    if (buttonHit(x, y, bx, 62, bw, bh)) return MENU_ACTION_NEW_GAME;
+    if (buttonHit(x, y, bx, 118, bw, bh)) return MENU_ACTION_LOAD_GAME;
+    return MENU_ACTION_NONE;
+}
+
+int handlePauseMenuTouch(int x, int y) {
+    const int bw = 176;
+    const int bh = 34;
+    const int bx = (256 - bw) / 2;
+    if (buttonHit(x, y, bx, 52, bw, bh)) return MENU_ACTION_RESUME;
+    if (buttonHit(x, y, bx, 94, bw, bh)) return MENU_ACTION_SAVE_GAME;
+    if (buttonHit(x, y, bx, 136, bw, bh)) return MENU_ACTION_QUIT_TO_TITLE;
+    return MENU_ACTION_NONE;
 }
