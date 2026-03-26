@@ -10,6 +10,8 @@ This is a minimal Nintendo DSi port of Minecaft Legacy Edition
 - libnds
 - ndstool
 - On newer setups, Calico headers may also be required
+- Python3
+- Python3-Pillow
 
 ## Build
 
@@ -18,10 +20,10 @@ Simple. Run buildrom.sh.
 ## Controls
 
 - D-Pad: move
-- A/B: move up/down
-- L/R: yaw
-- X/Y: pitch
-- Start: toggle wireframe-ish overlay state placeholder
+- A/B/X/Y: look
+- L/R: Break/Place Blocks
+- Start: Pause
+- Select: Jump
 
 ## Notes
 

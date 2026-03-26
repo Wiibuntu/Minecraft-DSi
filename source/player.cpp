@@ -7,10 +7,18 @@
 static const float kPlayerRadius = 0.28f;
 static const float kPlayerHeight = 1.65f;
 static const float kMoveSpeed = 0.09f;
-static const float kGravity = 0.015f;
+static const float kGravity = 0.030f;
 static const float kJumpSpeed = 0.22f;
 static const float kYawStep = 0.055f;
 static const float kPitchStep = 0.030f;
+static const float kWorldBorderMinX = kPlayerRadius + 0.05f;
+static const float kWorldBorderMaxX = (float)WORLD_X - kPlayerRadius - 0.05f;
+static const float kWorldBorderMinZ = kPlayerRadius + 0.05f;
+static const float kWorldBorderMaxZ = (float)WORLD_Z - kPlayerRadius - 0.05f;
+
+static inline float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
 
 static bool collidesAt(float x, float y, float z) {
     int minX = (int)std::floor(x - kPlayerRadius);
@@ -72,8 +80,8 @@ void updatePlayer(Player& p, int held, int down) {
         moveZ += rightZ * kMoveSpeed;
     }
 
-    float nx = p.x + moveX;
-    float nz = p.z + moveZ;
+    float nx = clampf(p.x + moveX, kWorldBorderMinX, kWorldBorderMaxX);
+    float nz = clampf(p.z + moveZ, kWorldBorderMinZ, kWorldBorderMaxZ);
     if (!collidesAt(nx, p.y, p.z)) p.x = nx;
     if (!collidesAt(p.x, p.y, nz)) p.z = nz;
 

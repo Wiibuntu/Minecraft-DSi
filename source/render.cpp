@@ -14,10 +14,10 @@ static const int MIN_RENDER_W = 52;
 static const int MIN_RENDER_H = 40;
 static const int MAX_RENDER_W = 129;
 static const int MAX_RENDER_H = 96;
-static const float EYE_HEIGHT = 1.45f;
+static const float EYE_HEIGHT = 1.65f;
 static const float FOV = 0.80f;
-static const float MAX_RAY_DIST = 7.5f;
-static const int MAX_RAY_STEPS = 32;
+static const float MAX_RAY_DIST = 5.25f;
+static const int MAX_RAY_STEPS = 18;
 
 static const int kPlaceableBlocks[] = {
     BLOCK_GRASS,
@@ -71,6 +71,7 @@ enum MenuCacheScreen {
     MENU_CACHE_TITLE,
     MENU_CACHE_OPTIONS,
     MENU_CACHE_GRAPHICS,
+    MENU_CACHE_WORLD_SETUP,
     MENU_CACHE_LOADING,
     MENU_CACHE_PAUSE
 };
@@ -365,9 +366,11 @@ static void drawMapPanel(u16* fb, int playerX, int playerZ) {
     const int mapX0 = panelX + 10;
     const int mapY0 = panelY + 10;
     const int cell = 4;
+    const int oceanInset = 6;
 
     drawRect(fb, panelX, panelY, panelW, panelH, rgb15(5, 6, 8));
     drawRect(fb, panelX + 2, panelY + 2, panelW - 4, panelH - 4, rgb15(1, 2, 3));
+    drawRect(fb, mapX0 - oceanInset, mapY0 - oceanInset, WORLD_X * cell + oceanInset * 2, WORLD_Z * cell + oceanInset * 2, rgb15(4, 10, 20));
     drawTextPixel(fb, panelX + 10, panelY + 136, "MAP", rgb15(31, 31, 31));
 
     for (int z = 0; z < WORLD_Z; ++z) {
@@ -380,6 +383,11 @@ static void drawMapPanel(u16* fb, int playerX, int playerZ) {
             drawRect(fb, mapX0 + x * cell, mapY0 + z * cell, cell - 1, cell - 1, c);
         }
     }
+
+    drawRect(fb, mapX0 - 1, mapY0 - 1, WORLD_X * cell + 2, 1, rgb15(28, 28, 30));
+    drawRect(fb, mapX0 - 1, mapY0 + WORLD_Z * cell, WORLD_X * cell + 2, 1, rgb15(28, 28, 30));
+    drawRect(fb, mapX0 - 1, mapY0 - 1, 1, WORLD_Z * cell + 2, rgb15(28, 28, 30));
+    drawRect(fb, mapX0 + WORLD_X * cell, mapY0 - 1, 1, WORLD_Z * cell + 2, rgb15(28, 28, 30));
 
     drawRect(fb, mapX0 + playerX * cell - 1, mapY0 + playerZ * cell - 1, 3, 3, rgb15(31, 0, 0));
 }
@@ -451,6 +459,58 @@ void initRenderer() {
     gLastGraphicsSlider = -1;
 }
 
+
+void invalidateMenuCache() {
+    gMenuCacheScreen = MENU_CACHE_NONE;
+    gLastMenuLogoX = -1;
+    gLastMenuLogoY = -1;
+    gLastMenuLogoW = 0;
+    gLastMenuLogoH = 0;
+    gLastLoadingProgress = -1;
+    gLastGraphicsSlider = -1;
+}
+
+void prepareGameplayTransition() {
+    invalidateMenuCache();
+    std::memset(gTopFb, 0, 256 * 256 * sizeof(u16));
+    std::memset(gBottomFb, 0, 256 * 256 * sizeof(u16));
+    gHudStaticValid = false;
+    gHudFrameValid = false;
+    gHudRevision = -1;
+    gMapVisible = false;
+    gFrameCounter = 0;
+    gHudFrameCounter = 0;
+    gLastWorldRevision3D = -1;
+    gLastYaw = 9999.0f;
+    gLastPitch = 9999.0f;
+    gLastX = 9999.0f;
+    gLastY = 9999.0f;
+    gLastZ = 9999.0f;
+}
+
+void flushTransitionGhosting() {
+    static const u16 black = RGB15(0, 0, 0) | BIT(15);
+    static const u16 white = RGB15(31, 31, 31) | BIT(15);
+
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < 256 * 256; ++i) {
+            gTopFb[i] = black;
+            gBottomFb[i] = black;
+        }
+        swiWaitForVBlank();
+        for (int i = 0; i < 256 * 256; ++i) {
+            gTopFb[i] = white;
+            gBottomFb[i] = white;
+        }
+        swiWaitForVBlank();
+    }
+
+    for (int i = 0; i < 256 * 256; ++i) {
+        gTopFb[i] = black;
+        gBottomFb[i] = black;
+    }
+    swiWaitForVBlank();
+}
 
 int getRenderWidth() { return gRenderW; }
 int getRenderHeight() { return gRenderH; }
@@ -591,10 +651,9 @@ static bool shouldRedraw3D(const Player& p) {
     float dyaw = fabsf(p.yaw - gLastYaw);
     float dpitch = fabsf(p.pitch - gLastPitch);
     float dpos = fabsf(p.x - gLastX) + fabsf(p.y - gLastY) + fabsf(p.z - gLastZ);
-    bool moved = dpos > 0.03f;
-    bool turned = dyaw > 0.001f || dpitch > 0.001f;
-    if (worldChanged || moved || turned) return true;
-    return ((gFrameCounter & 1) == 0);
+    bool moved = dpos > 0.05f;
+    bool turned = dyaw > 0.012f || dpitch > 0.012f;
+    return worldChanged || moved || turned;
 }
 
 void renderFrame(const Player& p) {
@@ -636,24 +695,9 @@ void renderFrame(const Player& p) {
                 u16 texel = sampleHitTexture(p, hit, dirX, dirY, dirZ, eyeY);
                 int fog = (int)(hit.dist * 2.0f);
 
+                color = shadeColor(texel, hit.face, hl, fog);
                 if (hit.block == BLOCK_GLASS) {
-                    const float eps = 0.035f;
-                    const float remain = MAX_RAY_DIST - hit.dist - eps;
-                    u16 behind = (py < gRenderH / 2) ? gSkyColor[py] : gGroundColor[py];
-                    if (remain > 0.0f) {
-                        RayHit nextHit = castRayFrom(hx + dirX * eps, hy + dirY * eps, hz + dirZ * eps, dirX, dirY, dirZ, remain);
-                        if (nextHit.hit) {
-                            Player p2 = p; p2.x = hx + dirX * eps; p2.y = hy + dirY * eps - EYE_HEIGHT; p2.z = hz + dirZ * eps; behind = shadeHitTexture(p2, nextHit, dirX, dirY, dirZ, p2.y + EYE_HEIGHT, false);
-                        }
-                    }
-                    if (texel == 0) {
-                        color = behind;
-                    } else {
-                        u16 pane = shadeColor(texel, hit.face, hl, fog / 2);
-                        color = blendColor50(pane, behind);
-                    }
-                } else {
-                    color = shadeColor(texel, hit.face, hl, fog);
+                    color = shadeColor(rgb15(22, 24, 26), hit.face, hl, fog / 2);
                 }
             } else {
                 color = (py < gRenderH / 2) ? gSkyColor[py] : gGroundColor[py];
@@ -892,30 +936,96 @@ void renderGraphicsMenu() {
     gLastGraphicsSlider = sliderValue;
 }
 
+
+static void drawSettingRow(u16* fb, int y, const char* label, const char* value) {
+    drawTextPixelScaled(fb, 18, y, label, rgb15(31, 31, 31), 2);
+    drawButtonText(fb, 144, y - 4, 26, 24, "<");
+    drawButtonText(fb, 226, y - 4, 26, 24, ">");
+    drawRect(fb, 172, y - 2, 52, 20, rgb15(7, 7, 9));
+    drawRect(fb, 174, y, 48, 16, rgb15(3, 3, 5));
+    drawTextPixel(fb, 176, y + 4, value, rgb15(31, 31, 31));
+}
+
+void renderWorldSetupMenu(const WorldGenConfig& config, u32 seedStep) {
+    beginMenuScreen(MENU_CACHE_WORLD_SETUP);
+
+    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
+    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+
+    char line[32];
+    drawTextPixelScaled(gTopFb, 30, 22, "NEW WORLD", rgb15(31, 31, 31), 2);
+    drawRect(gTopFb, 20, 56, 216, 92, rgb15(7, 7, 9));
+    drawRect(gTopFb, 24, 60, 208, 84, rgb15(3, 3, 5));
+    drawTextPixel(gTopFb, 34, 72, "DPAD TYPE SIZE", rgb15(31, 31, 31));
+    drawTextPixel(gTopFb, 34, 86, "L R SEED  X TREES", rgb15(24, 30, 31));
+    drawTextPixel(gTopFb, 34, 100, "Y RANDOM", rgb15(24, 30, 31));
+    drawTextPixel(gTopFb, 34, 114, "A CREATE  B BACK", rgb15(24, 30, 31));
+    drawTextPixel(gTopFb, 34, 128, "TOUCH ALSO WORKS", rgb15(24, 30, 31));
+
+    drawRect(gBottomFb, 8, 8, 240, 176, rgb15(7, 7, 9));
+    drawRect(gBottomFb, 12, 12, 232, 168, rgb15(3, 3, 5));
+    drawTextPixelScaled(gBottomFb, 36, 18, "WORLD SETTINGS", rgb15(31, 31, 31), 2);
+
+    drawTextPixel(gBottomFb, 20, 46, "TYPE", rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 64, 40, 24, 20, "-");
+    drawRect(gBottomFb, 92, 42, 92, 16, rgb15(7, 7, 9));
+    drawRect(gBottomFb, 94, 44, 88, 12, rgb15(11, 11, 14));
+    drawTextPixel(gBottomFb, 98, 48, getWorldTypeName(config.worldType), rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 188, 40, 24, 20, "+");
+
+    drawTextPixel(gBottomFb, 20, 70, "SIZE", rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 64, 64, 24, 20, "-");
+    drawRect(gBottomFb, 92, 66, 92, 16, rgb15(7, 7, 9));
+    drawRect(gBottomFb, 94, 68, 88, 12, rgb15(11, 11, 14));
+    drawTextPixel(gBottomFb, 98, 72, getWorldSizeName(config.sizePreset), rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 188, 64, 24, 20, "+");
+
+    drawTextPixel(gBottomFb, 20, 94, "TREES", rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 92, 88, 72, 20, config.generateTrees ? "ON" : "OFF");
+
+    drawTextPixel(gBottomFb, 20, 118, "SEED", rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 64, 112, 24, 20, "-");
+    drawRect(gBottomFb, 92, 114, 120, 16, rgb15(7, 7, 9));
+    drawRect(gBottomFb, 94, 116, 116, 12, rgb15(11, 11, 14));
+    std::snprintf(line, sizeof(line), "%08lX", (unsigned long)config.seed);
+    drawTextPixel(gBottomFb, 108, 120, line, rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 216, 112, 24, 20, "+");
+
+    drawTextPixel(gBottomFb, 20, 142, "STEP", rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 64, 136, 24, 20, "-");
+    drawRect(gBottomFb, 92, 138, 56, 16, rgb15(7, 7, 9));
+    drawRect(gBottomFb, 94, 140, 52, 12, rgb15(11, 11, 14));
+    std::snprintf(line, sizeof(line), "%lu", (unsigned long)seedStep);
+    drawTextPixel(gBottomFb, 106, 144, line, rgb15(31, 31, 31));
+    drawButtonText(gBottomFb, 152, 136, 24, 20, "+");
+    drawButtonText(gBottomFb, 180, 136, 60, 20, "RANDOM");
+
+    drawButtonText(gBottomFb, 20, 160, 88, 16, "BACK");
+    drawButtonText(gBottomFb, 148, 160, 88, 16, "CREATE");
+
+    gLastMenuLogoX = 0;
+}
+
 void renderLoadingScreen(int progress, int animTick) {
-    (void)animTick;
     beginMenuScreen(MENU_CACHE_LOADING);
 
-    if (gLastMenuLogoX == -1) {
-        std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
-        std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
-        blitImage(gBottomFb, (256 - LABEL_LOADING_W) / 2, 48, LABEL_LOADING_W, LABEL_LOADING_H, LABEL_LOADING, LABEL_LOADING_W, LABEL_LOADING_H, true);
+    std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
+    std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
+    blitImage(gBottomFb, (256 - LABEL_LOADING_W) / 2, 48, LABEL_LOADING_W, LABEL_LOADING_H, LABEL_LOADING, LABEL_LOADING_W, LABEL_LOADING_H, true);
 
-        const int barX = 28;
-        const int barY = 98;
-        const int barW = 200;
-        const int barH = 20;
-        drawRect(gBottomFb, barX, barY, barW, barH, rgb15(5, 5, 7));
-        drawRect(gBottomFb, barX + 2, barY + 2, barW - 4, barH - 4, rgb15(1, 1, 2));
-        drawAnimatedMenuLogo(0, 156, 0, 16);
-    }
+    const int barX = 28;
+    const int barY = 98;
+    const int barW = 200;
+    const int barH = 20;
+    drawRect(gBottomFb, barX, barY, barW, barH, rgb15(5, 5, 7));
+    drawRect(gBottomFb, barX + 2, barY + 2, barW - 4, barH - 4, rgb15(1, 1, 2));
+    drawAnimatedMenuLogo(animTick, 156, 0, 16);
 
     if (progress != gLastLoadingProgress) {
         const int barX = 28;
         const int barY = 98;
         const int barW = 200;
         const int barH = 20;
-        restoreRectFromBase(gBottomFb, &gMenuBottomBase[0][0], barX + 3, barY + 3, barW - 6, barH - 6);
         int fill = ((barW - 6) * progress) / 100;
         drawRect(gBottomFb, barX + 3, barY + 3, fill, barH - 6, rgb15(6, 24, 10));
         gLastLoadingProgress = progress;
@@ -967,6 +1077,23 @@ int handleGraphicsMenuTouch(int x, int y) {
         setRenderResolution(width, height);
         return MENU_ACTION_NONE;
     }
+    return MENU_ACTION_NONE;
+}
+
+
+int handleWorldSetupTouch(int x, int y) {
+    if (buttonHit(x, y, 64, 40, 24, 20)) return MENU_ACTION_WORLD_TYPE_PREV;
+    if (buttonHit(x, y, 188, 40, 24, 20)) return MENU_ACTION_WORLD_TYPE_NEXT;
+    if (buttonHit(x, y, 64, 64, 24, 20)) return MENU_ACTION_WORLD_SIZE_PREV;
+    if (buttonHit(x, y, 188, 64, 24, 20)) return MENU_ACTION_WORLD_SIZE_NEXT;
+    if (buttonHit(x, y, 92, 88, 72, 20)) return MENU_ACTION_WORLD_TREES_TOGGLE;
+    if (buttonHit(x, y, 64, 112, 24, 20)) return MENU_ACTION_WORLD_SEED_PREV;
+    if (buttonHit(x, y, 216, 112, 24, 20)) return MENU_ACTION_WORLD_SEED_NEXT;
+    if (buttonHit(x, y, 64, 136, 24, 20)) return MENU_ACTION_WORLD_STEP_PREV;
+    if (buttonHit(x, y, 152, 136, 24, 20)) return MENU_ACTION_WORLD_STEP_NEXT;
+    if (buttonHit(x, y, 180, 136, 60, 20)) return MENU_ACTION_WORLD_RANDOMIZE;
+    if (buttonHit(x, y, 20, 160, 88, 16)) return MENU_ACTION_BACK;
+    if (buttonHit(x, y, 148, 160, 88, 16)) return MENU_ACTION_WORLD_CREATE;
     return MENU_ACTION_NONE;
 }
 

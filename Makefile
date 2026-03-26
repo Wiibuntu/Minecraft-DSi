@@ -36,9 +36,9 @@ NITRO    :=
 #---------------------------------------------------------------------------------
 # Code generation options
 #---------------------------------------------------------------------------------
-ARCH := -march=armv5te -mtune=arm946e-s -mthumb
+ARCH := -march=armv5te -mtune=arm946e-s -marm
 
-CFLAGS := -g -Wall -Wextra -O2 -ffast-math -ffunction-sections -fdata-sections \
+CFLAGS := -g -Wall -Wextra -O3 -ffast-math -fomit-frame-pointer -ffunction-sections -fdata-sections \
 	$(ARCH)
 CFLAGS += $(INCLUDE) -DARM9 -D__NDS__
 CXXFLAGS := $(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
@@ -48,7 +48,7 @@ LDFLAGS := -specs=ds_arm9.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 #---------------------------------------------------------------------------------
 # Libraries
 #---------------------------------------------------------------------------------
-LIBS := -lnds9
+LIBS := -lnds9 -lfat
 
 # Top-level library roots (must contain include/ and lib/)
 LIBDIRS := $(LIBNDS)
