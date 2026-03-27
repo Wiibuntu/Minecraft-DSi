@@ -14,3 +14,8 @@ struct Player {
 void initPlayer(Player& p);
 void updatePlayer(Player& p, int held, int down);
 
+
+float getLookSpeed();
+void cycleLookSpeed(int delta);
+float getMoveSpeed();
+void cycleMoveSpeed(int delta);

@@ -51,6 +51,26 @@ Expected filenames for the current placeable blocks:
 - `planks.png`
 - `brick.png`
 - `glass.png`
+- `birch_log_top.png`
+- `birch_log_side.png`
+- `spruce_log_top.png`
+- `spruce_log_side.png`
+- `jungle_log_top.png`
+- `jungle_log_side.png`
+- `birch_leaves.png`
+- `spruce_leaves.png`
+- `jungle_leaves.png`
+- `birch_planks.png`
+- `spruce_planks.png`
+- `jungle_planks.png`
+- `sandstone.png`
+- `obsidian.png`
+- `gravel.png`
+- `bookshelf.png`
+- `white_wool.png`
+- `gold_block.png`
+- `iron_block.png`
+
 
 Notes:
 

@@ -6,11 +6,15 @@
 
 static const float kPlayerRadius = 0.28f;
 static const float kPlayerHeight = 1.65f;
-static const float kMoveSpeed = 0.09f;
+static const float kMoveSpeedTable[] = {0.07f, 0.09f, 0.11f};
 static const float kGravity = 0.030f;
-static const float kJumpSpeed = 0.22f;
+static const float kJumpSpeed = 0.26f;
+static const float kLookSpeedTable[] = {0.70f, 1.00f, 1.30f};
+static int gMoveSpeedIndex = 1;
+static int gLookSpeedIndex = 1;
 static const float kYawStep = 0.055f;
 static const float kPitchStep = 0.030f;
+static const float kPitchLimit = 1.50f;
 static const float kWorldBorderMinX = kPlayerRadius + 0.05f;
 static const float kWorldBorderMaxX = (float)WORLD_X - kPlayerRadius - 0.05f;
 static const float kWorldBorderMinZ = kPlayerRadius + 0.05f;
@@ -47,13 +51,16 @@ void initPlayer(Player& p) {
 }
 
 void updatePlayer(Player& p, int held, int down) {
-    if (held & KEY_Y) p.yaw -= kYawStep;
-    if (held & KEY_A) p.yaw += kYawStep;
+    const float yawStep = kYawStep * kLookSpeedTable[gLookSpeedIndex];
+    const float pitchStep = kPitchStep * kLookSpeedTable[gLookSpeedIndex];
+    const float moveSpeed = kMoveSpeedTable[gMoveSpeedIndex];
+    if (held & KEY_Y) p.yaw -= yawStep;
+    if (held & KEY_A) p.yaw += yawStep;
 
-    if (held & KEY_B) p.pitch -= kPitchStep;
-    if (held & KEY_X) p.pitch += kPitchStep;
-    if (p.pitch < -0.8f) p.pitch = -0.8f;
-    if (p.pitch > 0.8f) p.pitch = 0.8f;
+    if (held & KEY_B) p.pitch -= pitchStep;
+    if (held & KEY_X) p.pitch += pitchStep;
+    if (p.pitch < -kPitchLimit) p.pitch = -kPitchLimit;
+    if (p.pitch > kPitchLimit) p.pitch = kPitchLimit;
 
     float forwardX = std::sinf(p.yaw);
     float forwardZ = std::cosf(p.yaw);
@@ -64,20 +71,20 @@ void updatePlayer(Player& p, int held, int down) {
     float moveZ = 0.0f;
 
     if (held & KEY_UP) {
-        moveX += forwardX * kMoveSpeed;
-        moveZ += forwardZ * kMoveSpeed;
+        moveX += forwardX * moveSpeed;
+        moveZ += forwardZ * moveSpeed;
     }
     if (held & KEY_DOWN) {
-        moveX -= forwardX * kMoveSpeed;
-        moveZ -= forwardZ * kMoveSpeed;
+        moveX -= forwardX * moveSpeed;
+        moveZ -= forwardZ * moveSpeed;
     }
     if (held & KEY_LEFT) {
-        moveX -= rightX * kMoveSpeed;
-        moveZ -= rightZ * kMoveSpeed;
+        moveX -= rightX * moveSpeed;
+        moveZ -= rightZ * moveSpeed;
     }
     if (held & KEY_RIGHT) {
-        moveX += rightX * kMoveSpeed;
-        moveZ += rightZ * kMoveSpeed;
+        moveX += rightX * moveSpeed;
+        moveZ += rightZ * moveSpeed;
     }
 
     float nx = clampf(p.x + moveX, kWorldBorderMinX, kWorldBorderMaxX);
@@ -102,4 +109,18 @@ void updatePlayer(Player& p, int held, int down) {
 
     if (p.y < 1.0f) p.y = 1.0f;
     if (p.y > WORLD_Y - 2.0f) p.y = WORLD_Y - 2.0f;
+}
+
+float getLookSpeed() { return kLookSpeedTable[gLookSpeedIndex]; }
+
+void cycleLookSpeed(int delta) {
+    const int count = (int)(sizeof(kLookSpeedTable) / sizeof(kLookSpeedTable[0]));
+    gLookSpeedIndex = (gLookSpeedIndex + delta + count) % count;
+}
+
+float getMoveSpeed() { return kMoveSpeedTable[gMoveSpeedIndex]; }
+
+void cycleMoveSpeed(int delta) {
+    const int count = (int)(sizeof(kMoveSpeedTable) / sizeof(kMoveSpeedTable[0]));
+    gMoveSpeedIndex = (gMoveSpeedIndex + delta + count) % count;
 }

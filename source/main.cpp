@@ -10,13 +10,29 @@ static const int kPlaceableBlocks[] = {
     BLOCK_DIRT,
     BLOCK_STONE,
     BLOCK_WOOD,
+    BLOCK_BIRCH_WOOD,
+    BLOCK_SPRUCE_WOOD,
+    BLOCK_JUNGLE_WOOD,
     BLOCK_LEAVES,
+    BLOCK_BIRCH_LEAVES,
+    BLOCK_SPRUCE_LEAVES,
+    BLOCK_JUNGLE_LEAVES,
     BLOCK_SAND,
     BLOCK_WATER,
     BLOCK_COBBLE,
     BLOCK_PLANKS,
+    BLOCK_BIRCH_PLANKS,
+    BLOCK_SPRUCE_PLANKS,
+    BLOCK_JUNGLE_PLANKS,
     BLOCK_BRICK,
-    BLOCK_GLASS
+    BLOCK_GLASS,
+    BLOCK_SANDSTONE,
+    BLOCK_OBSIDIAN,
+    BLOCK_GRAVEL,
+    BLOCK_BOOKSHELF,
+    BLOCK_WHITE_WOOL,
+    BLOCK_GOLD_BLOCK,
+    BLOCK_IRON_BLOCK
 };
 
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
@@ -29,6 +45,11 @@ enum GameModeState {
     STATE_LOADING,
     STATE_PLAYING,
     STATE_PAUSED
+};
+
+enum OptionsReturnState {
+    OPTIONS_RETURN_TITLE = 0,
+    OPTIONS_RETURN_PAUSE
 };
 
 static int selectedIndexFromBlock(int block) {
@@ -76,6 +97,7 @@ int main() {
     int animTick = 0;
     WorldGenConfig newWorldConfig = {nextRandomSeed(), WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true};
     u32 seedStep = 16u;
+    OptionsReturnState optionsReturnState = OPTIONS_RETURN_TITLE;
 
     while (1) {
         scanKeys();
@@ -100,6 +122,7 @@ int main() {
                         state = STATE_PLAYING;
                     }
                 } else if (action == MENU_ACTION_OPTIONS) {
+                    optionsReturnState = OPTIONS_RETURN_TITLE;
                     invalidateMenuCache();
                     state = STATE_OPTIONS;
                 }
@@ -192,9 +215,21 @@ int main() {
                 if (action == MENU_ACTION_OPEN_GRAPHICS) {
                     invalidateMenuCache();
                     state = STATE_GRAPHICS;
+                } else if (action == MENU_ACTION_RENDER_DIST_PREV) {
+                    cycleRenderDistance(-1);
+                } else if (action == MENU_ACTION_RENDER_DIST_NEXT) {
+                    cycleRenderDistance(1);
+                } else if (action == MENU_ACTION_LOOK_SPEED_PREV) {
+                    cycleLookSpeed(-1);
+                } else if (action == MENU_ACTION_LOOK_SPEED_NEXT) {
+                    cycleLookSpeed(1);
+                } else if (action == MENU_ACTION_MOVE_SPEED_PREV) {
+                    cycleMoveSpeed(-1);
+                } else if (action == MENU_ACTION_MOVE_SPEED_NEXT) {
+                    cycleMoveSpeed(1);
                 } else if (action == MENU_ACTION_BACK) {
                     invalidateMenuCache();
-                    state = STATE_TITLE;
+                    state = (optionsReturnState == OPTIONS_RETURN_PAUSE) ? STATE_PAUSED : STATE_TITLE;
                 }
             }
             renderOptionsMenu();
@@ -248,7 +283,12 @@ int main() {
                     state = STATE_PLAYING;
                 } else if (action == MENU_ACTION_SAVE_GAME) {
                     saveGame(player);
+                } else if (action == MENU_ACTION_OPTIONS) {
+                    optionsReturnState = OPTIONS_RETURN_PAUSE;
+                    invalidateMenuCache();
+                    state = STATE_OPTIONS;
                 } else if (action == MENU_ACTION_QUIT_TO_TITLE) {
+                    optionsReturnState = OPTIONS_RETURN_TITLE;
                     invalidateMenuCache();
                     state = STATE_TITLE;
                 }

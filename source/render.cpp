@@ -16,23 +16,70 @@ static const int MAX_RENDER_W = 129;
 static const int MAX_RENDER_H = 96;
 static const float EYE_HEIGHT = 1.65f;
 static const float FOV = 0.80f;
-static const float MAX_RAY_DIST = 5.25f;
-static const int MAX_RAY_STEPS = 18;
+static const float kRenderDistanceTable[] = {8.0f, 12.25f, 23.5f};
+static int gRenderDistanceIndex = 1;
+static const int MAX_RAY_STEPS = 16;
 
 static const int kPlaceableBlocks[] = {
     BLOCK_GRASS,
     BLOCK_DIRT,
     BLOCK_STONE,
     BLOCK_WOOD,
+    BLOCK_BIRCH_WOOD,
+    BLOCK_SPRUCE_WOOD,
+    BLOCK_JUNGLE_WOOD,
     BLOCK_LEAVES,
+    BLOCK_BIRCH_LEAVES,
+    BLOCK_SPRUCE_LEAVES,
+    BLOCK_JUNGLE_LEAVES,
     BLOCK_SAND,
     BLOCK_WATER,
     BLOCK_COBBLE,
     BLOCK_PLANKS,
+    BLOCK_BIRCH_PLANKS,
+    BLOCK_SPRUCE_PLANKS,
+    BLOCK_JUNGLE_PLANKS,
     BLOCK_BRICK,
-    BLOCK_GLASS
+    BLOCK_GLASS,
+    BLOCK_SANDSTONE,
+    BLOCK_OBSIDIAN,
+    BLOCK_GRAVEL,
+    BLOCK_BOOKSHELF,
+    BLOCK_WHITE_WOOL,
+    BLOCK_GOLD_BLOCK,
+    BLOCK_IRON_BLOCK
 };
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
+
+static const int kBuildingBlocks[] = {
+    BLOCK_STONE, BLOCK_COBBLE, BLOCK_BRICK, BLOCK_GLASS, BLOCK_SANDSTONE,
+    BLOCK_OBSIDIAN, BLOCK_GRAVEL, BLOCK_PLANKS, BLOCK_BIRCH_PLANKS,
+    BLOCK_SPRUCE_PLANKS, BLOCK_JUNGLE_PLANKS, BLOCK_GOLD_BLOCK, BLOCK_IRON_BLOCK
+};
+static const int kNaturalBlocks[] = {
+    BLOCK_GRASS, BLOCK_DIRT, BLOCK_SAND, BLOCK_WATER, BLOCK_WOOD,
+    BLOCK_BIRCH_WOOD, BLOCK_SPRUCE_WOOD, BLOCK_JUNGLE_WOOD, BLOCK_LEAVES,
+    BLOCK_BIRCH_LEAVES, BLOCK_SPRUCE_LEAVES, BLOCK_JUNGLE_LEAVES
+};
+static const int kDecorBlocks[] = {
+    BLOCK_BOOKSHELF, BLOCK_WHITE_WOOL, BLOCK_GLASS, BLOCK_BRICK, BLOCK_SANDSTONE,
+    BLOCK_PLANKS, BLOCK_BIRCH_PLANKS, BLOCK_SPRUCE_PLANKS, BLOCK_JUNGLE_PLANKS
+};
+struct HudCategory {
+    const char* label;
+    const int* entries;
+    int count;
+    bool placeholderOnly;
+};
+static const HudCategory kHudCategories[] = {
+    {"BUILD", kBuildingBlocks, (int)(sizeof(kBuildingBlocks) / sizeof(kBuildingBlocks[0])), false},
+    {"NATURE", kNaturalBlocks, (int)(sizeof(kNaturalBlocks) / sizeof(kNaturalBlocks[0])), false},
+    {"DECOR", kDecorBlocks, (int)(sizeof(kDecorBlocks) / sizeof(kDecorBlocks[0])), false},
+    {"ITEMS", nullptr, 0, true}
+};
+static const int kHudCategoryCount = sizeof(kHudCategories) / sizeof(kHudCategories[0]);
+static int gHudCategoryIndex = 0;
+
 
 static bool gMapVisible = false;
 static int gTopBg = -1;
@@ -85,6 +132,49 @@ static int gLastLoadingProgress = -1;
 static int gLastGraphicsSlider = -1;
 
 static inline u16 rgb15(int r, int g, int b);
+
+static const char* renderDistanceName() {
+    static const char* kNames[] = {"SHORT", "NORMAL", "FAR"};
+    return kNames[gRenderDistanceIndex];
+}
+
+static const char* speedName(float value) {
+    if (value < 0.85f) return "LOW";
+    if (value > 1.15f) return "HIGH";
+    return "MED";
+}
+static const char* blockName(int block) {
+    switch (block) {
+        case BLOCK_GRASS: return "GRASS";
+        case BLOCK_DIRT: return "DIRT";
+        case BLOCK_STONE: return "STONE";
+        case BLOCK_WOOD: return "OAK LOG";
+        case BLOCK_LEAVES: return "OAK LEAF";
+        case BLOCK_SAND: return "SAND";
+        case BLOCK_WATER: return "WATER";
+        case BLOCK_COBBLE: return "COBBLE";
+        case BLOCK_PLANKS: return "OAK PLNK";
+        case BLOCK_BRICK: return "BRICK";
+        case BLOCK_GLASS: return "GLASS";
+        case BLOCK_BIRCH_WOOD: return "BIRCHLOG";
+        case BLOCK_SPRUCE_WOOD: return "SPRUCE";
+        case BLOCK_JUNGLE_WOOD: return "JUNGLE";
+        case BLOCK_BIRCH_LEAVES: return "BIRCHLF";
+        case BLOCK_SPRUCE_LEAVES: return "SPRUCLF";
+        case BLOCK_JUNGLE_LEAVES: return "JUNGLF";
+        case BLOCK_BIRCH_PLANKS: return "BIRCHPL";
+        case BLOCK_SPRUCE_PLANKS: return "SPRUCPL";
+        case BLOCK_JUNGLE_PLANKS: return "JUNGLPL";
+        case BLOCK_SANDSTONE: return "SANDSTN";
+        case BLOCK_OBSIDIAN: return "OBSIDIA";
+        case BLOCK_GRAVEL: return "GRAVEL";
+        case BLOCK_BOOKSHELF: return "SHELF";
+        case BLOCK_WHITE_WOOL: return "WOOL";
+        case BLOCK_GOLD_BLOCK: return "GOLD";
+        case BLOCK_IRON_BLOCK: return "IRON";
+        default: return "BLOCK";
+    }
+}
 
 static int graphicsSliderValue() {
     const int rangeW = MAX_RENDER_W - MIN_RENDER_W;
@@ -175,6 +265,22 @@ static const u16* textureForBlockFace(int block, int face, bool topFace) {
         case BLOCK_PLANKS: return TEX_PLANKS;
         case BLOCK_BRICK: return TEX_BRICK;
         case BLOCK_GLASS: return TEX_GLASS;
+        case BLOCK_BIRCH_WOOD: return topFace ? TEX_BIRCH_WOOD_TOP : TEX_BIRCH_WOOD_SIDE;
+        case BLOCK_SPRUCE_WOOD: return topFace ? TEX_SPRUCE_WOOD_TOP : TEX_SPRUCE_WOOD_SIDE;
+        case BLOCK_JUNGLE_WOOD: return topFace ? TEX_JUNGLE_WOOD_TOP : TEX_JUNGLE_WOOD_SIDE;
+        case BLOCK_BIRCH_LEAVES: return TEX_BIRCH_LEAVES;
+        case BLOCK_SPRUCE_LEAVES: return TEX_SPRUCE_LEAVES;
+        case BLOCK_JUNGLE_LEAVES: return TEX_JUNGLE_LEAVES;
+        case BLOCK_BIRCH_PLANKS: return TEX_BIRCH_PLANKS;
+        case BLOCK_SPRUCE_PLANKS: return TEX_SPRUCE_PLANKS;
+        case BLOCK_JUNGLE_PLANKS: return TEX_JUNGLE_PLANKS;
+        case BLOCK_SANDSTONE: return TEX_SANDSTONE;
+        case BLOCK_OBSIDIAN: return TEX_OBSIDIAN;
+        case BLOCK_GRAVEL: return TEX_GRAVEL;
+        case BLOCK_BOOKSHELF: return TEX_BOOKSHELF;
+        case BLOCK_WHITE_WOOL: return TEX_WHITE_WOOL;
+        case BLOCK_GOLD_BLOCK: return TEX_GOLD_BLOCK;
+        case BLOCK_IRON_BLOCK: return TEX_IRON_BLOCK;
         default: return TEX_STONE;
     }
 }
@@ -338,6 +444,123 @@ static void drawTextPixelScaled(u16* fb, int x, int y, const char* text, u16 col
     }
 }
 
+
+struct Vec3f {
+    float x;
+    float y;
+    float z;
+};
+
+struct ScreenPt {
+    int x;
+    int y;
+};
+
+static inline ScreenPt projectModelVertex(const Vec3f& v, float yaw, float pitch, float scale, int ox, int oy) {
+    const float cy = std::cosf(yaw);
+    const float sy = std::sinf(yaw);
+    const float cp = std::cosf(pitch);
+    const float sp = std::sinf(pitch);
+
+    float rx = v.x * cy + v.z * sy;
+    float rz = -v.x * sy + v.z * cy;
+    float ry = v.y;
+
+    float ry2 = ry * cp - rz * sp;
+    float rz2 = ry * sp + rz * cp + 5.2f;
+    if (rz2 < 0.2f) rz2 = 0.2f;
+
+    const float inv = scale / rz2;
+    ScreenPt out;
+    out.x = ox + (int)(rx * inv);
+    out.y = oy - (int)(ry2 * inv);
+    return out;
+}
+
+static void fillTriangle(u16* fb, ScreenPt a, ScreenPt b, ScreenPt c, u16 color) {
+    int minX = a.x;
+    int maxX = a.x;
+    int minY = a.y;
+    int maxY = a.y;
+    if (b.x < minX) minX = b.x;
+    if (c.x < minX) minX = c.x;
+    if (b.x > maxX) maxX = b.x;
+    if (c.x > maxX) maxX = c.x;
+    if (b.y < minY) minY = b.y;
+    if (c.y < minY) minY = c.y;
+    if (b.y > maxY) maxY = b.y;
+    if (c.y > maxY) maxY = c.y;
+
+    if (maxX < 0 || maxY < 0 || minX >= SCREEN_W || minY >= SCREEN_H) return;
+    if (minX < 0) minX = 0;
+    if (minY < 0) minY = 0;
+    if (maxX >= SCREEN_W) maxX = SCREEN_W - 1;
+    if (maxY >= SCREEN_H) maxY = SCREEN_H - 1;
+
+    const int area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (area == 0) return;
+
+    for (int y = minY; y <= maxY; ++y) {
+        u16* row = fb + y * 256;
+        for (int x = minX; x <= maxX; ++x) {
+            const int w0 = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+            const int w1 = (c.x - b.x) * (y - b.y) - (c.y - b.y) * (x - b.x);
+            const int w2 = (a.x - c.x) * (y - c.y) - (a.y - c.y) * (x - c.x);
+            if ((area > 0 && w0 >= 0 && w1 >= 0 && w2 >= 0) || (area < 0 && w0 <= 0 && w1 <= 0 && w2 <= 0)) {
+                row[x] = color;
+            }
+        }
+    }
+}
+
+static void fillQuad(u16* fb, ScreenPt a, ScreenPt b, ScreenPt c, ScreenPt d, u16 color) {
+    fillTriangle(fb, a, b, c, color);
+    fillTriangle(fb, a, c, d, color);
+}
+
+static u16 tintColor(u16 color, int mulNum, int mulDen, int add) {
+    int r = ((color & 31) * mulNum) / mulDen + add;
+    int g = ((((color >> 5) & 31) * mulNum) / mulDen) + add;
+    int b = ((((color >> 10) & 31) * mulNum) / mulDen) + add;
+    return rgb15(clamp5(r), clamp5(g), clamp5(b));
+}
+
+static u16 centerTexel(const u16* tex) {
+    return tex[(TEX_SIZE / 2) * TEX_SIZE + (TEX_SIZE / 2)];
+}
+
+static void drawHeldHand(u16* fb) {
+    const Vec3f verts[8] = {
+        {-0.75f, -0.55f, -0.55f}, {0.75f, -0.55f, -0.55f}, {0.75f, 0.55f, -0.55f}, {-0.75f, 0.55f, -0.55f},
+        {-0.75f, -0.55f, 0.55f},  {0.75f, -0.55f, 0.55f},  {0.75f, 0.55f, 0.55f},  {-0.75f, 0.55f, 0.55f}
+    };
+    ScreenPt p[8];
+    for (int i = 0; i < 8; ++i) p[i] = projectModelVertex(verts[i], -0.65f, -0.92f, 84.0f, 202, 170);
+
+    const u16 front = rgb15(24, 13, 11);
+    const u16 side = rgb15(20, 10, 8);
+    const u16 top = rgb15(28, 16, 14);
+    fillQuad(fb, p[0], p[1], p[2], p[3], front);
+    fillQuad(fb, p[1], p[5], p[6], p[2], side);
+    fillQuad(fb, p[3], p[2], p[6], p[7], top);
+}
+
+static void drawHeldBlockModel(u16* fb, int block) {
+    const Vec3f verts[8] = {
+        {-1.0f, -1.0f, -1.0f}, {1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, -1.0f}, {-1.0f, 1.0f, -1.0f},
+        {-1.0f, -1.0f, 1.0f},  {1.0f, -1.0f, 1.0f},  {1.0f, 1.0f, 1.0f},  {-1.0f, 1.0f, 1.0f}
+    };
+    ScreenPt p[8];
+    for (int i = 0; i < 8; ++i) p[i] = projectModelVertex(verts[i], -0.58f, -0.62f, 68.0f, 186, 148);
+
+    const u16 front = centerTexel(textureForBlockFace(block, 0, false));
+    const u16 top = centerTexel(textureForBlockFace(block, 1, true));
+    const u16 side = centerTexel(textureForBlockFace(block, 2, false));
+    fillQuad(fb, p[0], p[1], p[2], p[3], tintColor(front, 1, 1, 0));
+    fillQuad(fb, p[1], p[5], p[6], p[2], tintColor(side, 4, 5, -1));
+    fillQuad(fb, p[3], p[2], p[6], p[7], tintColor(top, 6, 5, 1));
+}
+
 static void drawBlockIcon(u16* fb, int x, int y, int block, bool selected) {
     drawRect(fb, x, y, 28, 28, rgb15(8, 8, 10));
     drawRect(fb, x + 2, y + 2, 24, 24, rgb15(2, 2, 3));
@@ -392,33 +615,41 @@ static void drawMapPanel(u16* fb, int playerX, int playerZ) {
     drawRect(fb, mapX0 + playerX * cell - 1, mapY0 + playerZ * cell - 1, 3, 3, rgb15(31, 0, 0));
 }
 
+static void drawHudTab(u16* fb, int x, int y, int w, const char* label, bool active) {
+    drawRect(fb, x, y, w, 18, active ? rgb15(23, 23, 24) : rgb15(11, 11, 13));
+    drawRect(fb, x + 2, y + 2, w - 4, 14, active ? rgb15(29, 29, 31) : rgb15(6, 6, 8));
+    drawTextPixel(fb, x + 6, y + 6, label, active ? rgb15(3, 3, 4) : rgb15(27, 27, 28));
+}
+
 static void rebuildHudStatic() {
     u16* fb = &gHudStatic[0][0];
     for (int y = 0; y < 192; ++y) {
         u16* row = fb + y * 256;
-        for (int x = 0; x < 256; ++x) row[x] = rgb15(3, 3, 5);
+        for (int x = 0; x < 256; ++x) row[x] = rgb15(5, 5, 7);
     }
 
-    drawRect(fb, 196, 8, 50, 18, rgb15(8, 8, 12));
-    drawRect(fb, 198, 10, 46, 14, rgb15(2, 2, 3));
-    drawTextPixel(fb, 206, 15, "MAP", rgb15(31, 31, 31));
+    drawRect(fb, 8, 8, 240, 176, rgb15(8, 8, 10));
+    drawRect(fb, 12, 12, 232, 168, rgb15(12, 12, 14));
 
-    const int infoY = 12;
-    drawRect(fb, 10, infoY, 92, 8, rgb15(6, 6, 8));
-    drawRect(fb, 10, infoY + 12, 92, 8, rgb15(6, 6, 8));
-    drawRect(fb, 10, infoY + 24, 92, 8, rgb15(6, 6, 8));
-
-    int startX = 16;
-    int startY = 62;
-    int gapX = 38;
-    int gapY = 36;
-    for (int i = 0; i < kPlaceableBlockCount; ++i) {
-        int row = i / 6;
-        int col = i % 6;
-        int x = startX + col * gapX;
-        int y = startY + row * gapY;
-        drawBlockIcon(fb, x, y, kPlaceableBlocks[i], false);
+    const int tabW = 54;
+    for (int i = 0; i < kHudCategoryCount; ++i) {
+        drawHudTab(fb, 12 + i * 58, 12, tabW, kHudCategories[i].label, i == gHudCategoryIndex);
     }
+
+    drawRect(fb, 16, 36, 216, 110, rgb15(9, 9, 11));
+    drawRect(fb, 18, 38, 212, 106, rgb15(18, 18, 19));
+    drawTextPixel(fb, 24, 42, kHudCategories[gHudCategoryIndex].placeholderOnly ? "ITEMS COMING SOON" : "SELECT A BLOCK", rgb15(30, 30, 30));
+
+    drawRect(fb, 236, 36, 8, 110, rgb15(10, 10, 11));
+    drawRect(fb, 237, 42, 6, 28, rgb15(25, 25, 26));
+
+    drawRect(fb, 16, 152, 152, 24, rgb15(9, 9, 11));
+    drawRect(fb, 18, 154, 148, 20, rgb15(16, 16, 18));
+    drawTextPixel(fb, 26, 161, "SELECT BACK  L BREAK  R PLACE", rgb15(28, 28, 29));
+
+    drawRect(fb, 176, 152, 56, 24, rgb15(9, 9, 11));
+    drawRect(fb, 178, 154, 52, 20, rgb15(16, 16, 18));
+    drawTextPixel(fb, 191, 161, "MAP", rgb15(28, 28, 29));
 
     gHudRevision = getWorldRevision();
     gHudStaticValid = true;
@@ -514,6 +745,18 @@ void flushTransitionGhosting() {
 
 int getRenderWidth() { return gRenderW; }
 int getRenderHeight() { return gRenderH; }
+float getRenderDistance() { return kRenderDistanceTable[gRenderDistanceIndex]; }
+
+void cycleRenderDistance(int delta) {
+    const int count = (int)(sizeof(kRenderDistanceTable) / sizeof(kRenderDistanceTable[0]));
+    gRenderDistanceIndex = (gRenderDistanceIndex + delta + count) % count;
+    gLastWorldRevision3D = -1;
+    gLastYaw = 9999.0f;
+    gLastPitch = 9999.0f;
+    gLastX = 9999.0f;
+    gLastY = 9999.0f;
+    gLastZ = 9999.0f;
+}
 
 void setRenderResolution(int width, int height) {
     if (width < MIN_RENDER_W) width = MIN_RENDER_W;
@@ -609,35 +852,51 @@ static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dir
 }
 
 RayHit castCenterRay(const Player& p, float maxDist) {
-    float cp = std::cosf(p.pitch);
-    float dirX = std::sinf(p.yaw) * cp;
-    float dirY = std::sinf(p.pitch);
-    float dirZ = std::cosf(p.yaw) * cp;
-    return castRayInternal(p, dirX, dirY, dirZ, maxDist);
+    const float cp = std::cosf(p.pitch);
+    const float sp = std::sinf(p.pitch);
+    const float cy = std::cosf(p.yaw);
+    const float sy = std::sinf(p.yaw);
+
+    const float forwardX = sy * cp;
+    const float forwardY = sp;
+    const float forwardZ = cy * cp;
+    return castRayInternal(p, forwardX, forwardY, forwardZ, maxDist);
 }
 
 HudTouchAction handleHudTouch(int x, int y) {
     HudTouchAction action{HUD_TOUCH_NONE, 0};
 
-    if (x >= 196 && x < 246 && y >= 8 && y < 26) {
+    const int tabW = 54;
+    for (int i = 0; i < kHudCategoryCount; ++i) {
+        const int tx = 12 + i * 58;
+        if (x >= tx && x < tx + tabW && y >= 12 && y < 30) {
+            if (gHudCategoryIndex != i) {
+                gHudCategoryIndex = i;
+                gHudStaticValid = false;
+                gHudFrameValid = false;
+            }
+            return action;
+        }
+    }
+
+    if (x >= 176 && x < 232 && y >= 152 && y < 176) {
         gMapVisible = !gMapVisible;
         gHudFrameValid = false;
         action.type = HUD_TOUCH_TOGGLE_MAP;
         return action;
     }
 
-    int startX = 16;
-    int startY = 62;
-    int gapX = 38;
-    int gapY = 36;
-    for (int i = 0; i < kPlaceableBlockCount; ++i) {
-        int row = i / 6;
-        int col = i % 6;
-        int sx = startX + col * gapX;
-        int sy = startY + row * gapY;
-        if (x >= sx && x < sx + 28 && y >= sy && y < sy + 28) {
+    const HudCategory& cat = kHudCategories[gHudCategoryIndex];
+    const int gridX = 24;
+    const int gridY = 56;
+    for (int i = 0; i < cat.count; ++i) {
+        const int cx = i % 5;
+        const int cy = i / 5;
+        const int sx = gridX + cx * 40;
+        const int sy = gridY + cy * 28;
+        if (x >= sx && x < sx + 38 && y >= sy && y < sy + 28) {
             action.type = HUD_TOUCH_SELECT_BLOCK;
-            action.value = kPlaceableBlocks[i];
+            action.value = cat.entries[i];
             return action;
         }
     }
@@ -666,26 +925,29 @@ void renderFrame(const Player& p) {
     const float sp = std::sinf(p.pitch);
     const float cy = std::cosf(p.yaw);
     const float sy = std::sinf(p.yaw);
-    float dirXCol[MAX_RENDER_W];
-    float dirZCol[MAX_RENDER_W];
-    for (int px = 0; px < gRenderW; ++px) {
-        const float nx = gNx[px];
-        dirXCol[px] = sy * cp + cy * nx;
-        dirZCol[px] = cy * cp - sy * nx;
-    }
+
+    const float forwardX = sy * cp;
+    const float forwardY = sp;
+    const float forwardZ = cy * cp;
+    const float rightX = cy;
+    const float rightY = 0.0f;
+    const float rightZ = -sy;
+    const float upX = -sy * sp;
+    const float upY = cp;
+    const float upZ = -cy * sp;
 
     const float eyeY = p.y + EYE_HEIGHT;
     for (int py = 0; py < gRenderH; ++py) {
         const float ny = gNy[py];
-        const float dirYBase = sp - ny;
         u16* dstRow = gLowRes[py];
         for (int px = 0; px < gRenderW; ++px) {
+            const float nx = gNx[px];
             const float invLen = gInvLen[py][px];
-            const float dirX = dirXCol[px] * invLen;
-            const float dirY = dirYBase * invLen;
-            const float dirZ = dirZCol[px] * invLen;
+            const float dirX = (forwardX + rightX * nx - upX * ny) * invLen;
+            const float dirY = (forwardY + rightY * nx - upY * ny) * invLen;
+            const float dirZ = (forwardZ + rightZ * nx - upZ * ny) * invLen;
 
-            RayHit hit = castRayInternal(p, dirX, dirY, dirZ, MAX_RAY_DIST);
+            RayHit hit = castRayInternal(p, dirX, dirY, dirZ, getRenderDistance());
             u16 color;
             if (hit.hit) {
                 bool hl = center.hit && hit.x == center.x && hit.y == center.y && hit.z == center.z;
@@ -720,6 +982,11 @@ void renderFrame(const Player& p) {
     u16* midRow = gTopFb + crossY * 256;
     for (int x = cx - 3; x <= cx + 3; ++x) midRow[x] = rgb15(31, 31, 31);
 
+    drawHeldHand(gTopFb);
+    if (p.selectedBlock != BLOCK_AIR) {
+        drawHeldBlockModel(gTopFb, p.selectedBlock);
+    }
+
     gLastYaw = p.yaw;
     gLastPitch = p.pitch;
     gLastX = p.x;
@@ -739,36 +1006,36 @@ void renderHUD(const Player& p, const RayHit& hit) {
 
     std::memcpy(gBottomFb, gHudStatic, 192 * 256 * sizeof(u16));
 
-    int infoY = 12;
-    int yawBar = ((int)(p.yaw * 40.0f) % 92 + 92) % 92;
-    int pitchBar = (int)((p.pitch + 0.8f) / 1.6f * 90.0f);
-    int distBar = hit.hit ? (int)(92.0f - hit.dist * 14.0f) : 0;
-    if (pitchBar < 0) pitchBar = 0;
-    if (pitchBar > 90) pitchBar = 90;
-    if (distBar < 0) distBar = 0;
-    if (distBar > 92) distBar = 92;
+    const HudCategory& cat = kHudCategories[gHudCategoryIndex];
+    const int gridX = 24;
+    const int gridY = 56;
+    const int cols = 5;
+    const int rows = 3;
+    const int slotW = 38;
+    const int slotH = 28;
+    for (int i = 0; i < cols * rows; ++i) {
+        const int cx = i % cols;
+        const int cy = i / cols;
+        const int x = gridX + cx * 40;
+        const int y = gridY + cy * 28;
+        drawRect(gBottomFb, x, y, slotW, slotH, rgb15(13, 13, 14));
+        drawRect(gBottomFb, x + 2, y + 2, slotW - 4, slotH - 4, rgb15(22, 22, 23));
+        if (!cat.placeholderOnly && i < cat.count) {
+            drawBlockIcon(gBottomFb, x + 5, y + 1, cat.entries[i], cat.entries[i] == p.selectedBlock);
+        }
+    }
 
-    drawRect(gBottomFb, 10 + yawBar, infoY, 2, 8, rgb15(31, 18, 0));
-    drawRect(gBottomFb, 10 + pitchBar, infoY + 12, 2, 8, rgb15(0, 24, 31));
-    drawRect(gBottomFb, 10, infoY + 24, distBar, 8, hit.hit ? rgb15(0, 31, 0) : rgb15(12, 0, 0));
-
-    int startX = 16;
-    int startY = 62;
-    int gapX = 38;
-    int gapY = 36;
-    for (int i = 0; i < kPlaceableBlockCount; ++i) {
-        int row = i / 6;
-        int col = i % 6;
-        int x = startX + col * gapX;
-        int y = startY + row * gapY;
-        drawBlockIcon(gBottomFb, x, y, kPlaceableBlocks[i], kPlaceableBlocks[i] == p.selectedBlock);
+    if (cat.placeholderOnly) {
+        drawTextPixelScaled(gBottomFb, 68, 94, "ITEMS", rgb15(27, 27, 28), 2);
+        drawTextPixel(gBottomFb, 64, 114, "FUTURE TAB FOR TOOLS", rgb15(24, 24, 25));
+    } else {
+        char label[24];
+        std::snprintf(label, sizeof(label), "%s", blockName(p.selectedBlock));
+        drawTextPixel(gBottomFb, 24, 42, label, rgb15(30, 30, 30));
     }
 
     if (gMapVisible) {
         drawMapPanel(gBottomFb, (int)p.x, (int)p.z);
-        drawRect(gBottomFb, 196, 8, 50, 18, rgb15(12, 7, 7));
-        drawRect(gBottomFb, 198, 10, 46, 14, rgb15(4, 1, 1));
-        drawTextPixel(gBottomFb, 208, 15, "MAP", rgb15(31, 24, 24));
     }
 
     std::memcpy(gHudFrame, gBottomFb, 192 * 256 * sizeof(u16));
@@ -877,6 +1144,8 @@ static void drawSliderBar(u16* fb, int x, int y, int w, int h, int value) {
     drawRect(fb, knobX, y + 1, 8, h - 2, rgb15(31, 31, 31));
 }
 
+static void drawSettingRow(u16* fb, int y, const char* label, const char* value);
+
 static void drawRenderSizeLabel(u16* fb, int x, int y) {
     char line[32];
     std::snprintf(line, sizeof(line), "%d X %d", gRenderW, gRenderH);
@@ -904,14 +1173,16 @@ void renderTitleMenu(int animTick) {
 
 void renderOptionsMenu() {
     beginMenuScreen(MENU_CACHE_OPTIONS);
-    if (gLastMenuLogoX != -1) return;
 
     std::memcpy(gTopFb, gMenuTopBase, 192 * 256 * sizeof(u16));
     std::memcpy(gBottomFb, gMenuBottomBase, 192 * 256 * sizeof(u16));
 
-    drawTextPixelScaled(gBottomFb, 83, 20, "OPTIONS", rgb15(31, 31, 31), 2);
-    drawButtonText(gBottomFb, 68, 58, 120, 34, "GRAPHICS");
-    drawButtonText(gBottomFb, 14, 148, 82, 28, "BACK");
+    drawTextPixelScaled(gBottomFb, 83, 12, "OPTIONS", rgb15(31, 31, 31), 2);
+    drawSettingRow(gBottomFb, 46, "RENDER DIST", renderDistanceName());
+    drawSettingRow(gBottomFb, 78, "LOOK SPEED", speedName(getLookSpeed()));
+    drawSettingRow(gBottomFb, 110, "MOVE SPEED", speedName(getMoveSpeed()));
+    drawButtonText(gBottomFb, 68, 138, 120, 24, "GRAPHICS");
+    drawButtonText(gBottomFb, 14, 164, 82, 20, "BACK");
     blitImage(gTopFb, (256 - MENU_LOGO_W) / 2, 26, MENU_LOGO_W, MENU_LOGO_H, MENU_LOGO, MENU_LOGO_W, MENU_LOGO_H, true);
     gLastMenuLogoX = 0;
 }
@@ -1044,8 +1315,9 @@ void renderPauseMenu() {
     const int bh = 34;
     const int bx = (256 - bw) / 2;
     drawButton(gBottomFb, bx, 52, bw, bh, PAUSE_RESUME, PAUSE_RESUME_W, PAUSE_RESUME_H);
-    drawButton(gBottomFb, bx, 94, bw, bh, PAUSE_SAVE_GAME, PAUSE_SAVE_GAME_W, PAUSE_SAVE_GAME_H);
-    drawButton(gBottomFb, bx, 136, bw, bh, PAUSE_QUIT_GAME, PAUSE_QUIT_GAME_W, PAUSE_QUIT_GAME_H);
+    drawButton(gBottomFb, bx, 88, bw, bh, PAUSE_SAVE_GAME, PAUSE_SAVE_GAME_W, PAUSE_SAVE_GAME_H);
+    drawButtonText(gBottomFb, bx, 124, bw, bh, "OPTIONS");
+    drawButton(gBottomFb, bx, 160, bw, 24, PAUSE_QUIT_GAME, PAUSE_QUIT_GAME_W, PAUSE_QUIT_GAME_H);
     gLastMenuLogoX = 0;
 }
 
@@ -1061,8 +1333,14 @@ int handleTitleMenuTouch(int x, int y) {
 
 
 int handleOptionsMenuTouch(int x, int y) {
-    if (buttonHit(x, y, 68, 58, 120, 34)) return MENU_ACTION_OPEN_GRAPHICS;
-    if (buttonHit(x, y, 14, 148, 82, 28)) return MENU_ACTION_BACK;
+    if (buttonHit(x, y, 144, 42, 34, 24) || (x >= 172 && x < 198 && y >= 42 && y < 66)) return MENU_ACTION_RENDER_DIST_PREV;
+    if (buttonHit(x, y, 218, 42, 34, 24) || (x >= 198 && x < 224 && y >= 42 && y < 66)) return MENU_ACTION_RENDER_DIST_NEXT;
+    if (buttonHit(x, y, 144, 74, 34, 24) || (x >= 172 && x < 198 && y >= 74 && y < 98)) return MENU_ACTION_LOOK_SPEED_PREV;
+    if (buttonHit(x, y, 218, 74, 34, 24) || (x >= 198 && x < 224 && y >= 74 && y < 98)) return MENU_ACTION_LOOK_SPEED_NEXT;
+    if (buttonHit(x, y, 144, 106, 34, 24) || (x >= 172 && x < 198 && y >= 106 && y < 130)) return MENU_ACTION_MOVE_SPEED_PREV;
+    if (buttonHit(x, y, 218, 106, 34, 24) || (x >= 198 && x < 224 && y >= 106 && y < 130)) return MENU_ACTION_MOVE_SPEED_NEXT;
+    if (buttonHit(x, y, 68, 138, 120, 24)) return MENU_ACTION_OPEN_GRAPHICS;
+    if (buttonHit(x, y, 14, 164, 82, 20)) return MENU_ACTION_BACK;
     return MENU_ACTION_NONE;
 }
 
@@ -1102,7 +1380,8 @@ int handlePauseMenuTouch(int x, int y) {
     const int bh = 34;
     const int bx = (256 - bw) / 2;
     if (buttonHit(x, y, bx, 52, bw, bh)) return MENU_ACTION_RESUME;
-    if (buttonHit(x, y, bx, 94, bw, bh)) return MENU_ACTION_SAVE_GAME;
-    if (buttonHit(x, y, bx, 136, bw, bh)) return MENU_ACTION_QUIT_TO_TITLE;
+    if (buttonHit(x, y, bx, 88, bw, bh)) return MENU_ACTION_SAVE_GAME;
+    if (buttonHit(x, y, bx, 124, bw, bh)) return MENU_ACTION_OPTIONS;
+    if (buttonHit(x, y, bx, 160, bw, 24)) return MENU_ACTION_QUIT_TO_TITLE;
     return MENU_ACTION_NONE;
 }

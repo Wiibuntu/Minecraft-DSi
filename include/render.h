@@ -39,6 +39,12 @@ enum MenuAction {
     MENU_ACTION_SAVE_GAME,
     MENU_ACTION_QUIT_TO_TITLE,
     MENU_ACTION_OPEN_WORLD_SETUP,
+    MENU_ACTION_RENDER_DIST_PREV,
+    MENU_ACTION_RENDER_DIST_NEXT,
+    MENU_ACTION_LOOK_SPEED_PREV,
+    MENU_ACTION_LOOK_SPEED_NEXT,
+    MENU_ACTION_MOVE_SPEED_PREV,
+    MENU_ACTION_MOVE_SPEED_NEXT,
     MENU_ACTION_WORLD_TYPE_PREV,
     MENU_ACTION_WORLD_TYPE_NEXT,
     MENU_ACTION_WORLD_SIZE_PREV,
@@ -76,3 +82,5 @@ int handleWorldSetupTouch(int x, int y);
 int getRenderWidth();
 int getRenderHeight();
 void setRenderResolution(int width, int height);
+float getRenderDistance();
+void cycleRenderDistance(int delta);
