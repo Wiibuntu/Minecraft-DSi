@@ -110,19 +110,6 @@ static float gLastPitch = 9999.0f;
 static float gLastX = 9999.0f;
 static float gLastY = 9999.0f;
 static float gLastZ = 9999.0f;
-static int gLastHudHealth = -9999;
-static bool gLastHudAlive = false;
-static int gLastHudSelectedBlock = -9999;
-static int gLastHudSelectedSlot = -9999;
-static int gLastHudBreakTicks = -9999;
-static int gLastHudBreakNeeded = -9999;
-static int gLastHudMode = -9999;
-static bool gLastHudMapVisible = false;
-static int gLastHudPlayerMapX = -9999;
-static int gLastHudPlayerMapZ = -9999;
-static int gLastHudCategoryIndex = -9999;
-static int gLastHudSelectedItemId = -9999;
-static int gLastHudSelectedItemCount = -9999;
 
 static u16 gMenuTopBase[192][256];
 static u16 gMenuBottomBase[192][256];
@@ -240,12 +227,9 @@ static inline int clamp5(int v) {
 }
 
 static inline u16 shadeColor(u16 color, int face, bool highlighted, int fog, int lightLevel = 31, bool emissive = false) {
-    const int baseR = color & 31;
-    const int baseG = (color >> 5) & 31;
-    const int baseB = (color >> 10) & 31;
-    int r = baseR;
-    int g = baseG;
-    int b = baseB;
+    int r = color & 31;
+    int g = (color >> 5) & 31;
+    int b = (color >> 10) & 31;
 
     if (face == 1) {
         r = (r * 13) / 10;
@@ -260,7 +244,7 @@ static inline u16 shadeColor(u16 color, int face, bool highlighted, int fog, int
     if (emissive) {
         lightLevel = 31;
     }
-    if (lightLevel < 7) lightLevel = 7;
+    if (lightLevel < 4) lightLevel = 4;
     if (lightLevel > 31) lightLevel = 31;
     r = (r * lightLevel) / 31;
     g = (g * lightLevel) / 31;
@@ -275,31 +259,7 @@ static inline u16 shadeColor(u16 color, int face, bool highlighted, int fog, int
     r = clamp5(r - fog);
     g = clamp5(g - fog);
     b = clamp5(b - fog);
-
-    if ((baseR | baseG | baseB) != 0) {
-        int minAmbient = 1;
-        if (lightLevel >= 10) minAmbient = 2;
-        if (face == 1 && minAmbient < 2) minAmbient = 2;
-        if (r < minAmbient) r = minAmbient;
-        if (g < minAmbient) g = minAmbient;
-        if (b < minAmbient) b = minAmbient;
-    }
     return rgb15(r, g, b);
-}
-
-static inline bool isGlassLikeBlock(int block) {
-    return block == BLOCK_GLASS;
-}
-
-static inline bool shouldRenderFaceAgainstNeighbor(int block, int neighbor) {
-    if (block == BLOCK_AIR) return false;
-    if (block == BLOCK_WATER) return neighbor == BLOCK_AIR || neighbor == BLOCK_TORCH;
-    if (isGlassLikeBlock(block)) {
-        return neighbor == BLOCK_AIR || neighbor == BLOCK_WATER || neighbor == BLOCK_TORCH;
-    }
-    if (neighbor == BLOCK_AIR || neighbor == BLOCK_WATER || neighbor == BLOCK_TORCH) return true;
-    if (isGlassLikeBlock(neighbor)) return true;
-    return false;
 }
 
 static const u16* textureForBlockFace(int block, int face, bool topFace) {
@@ -371,9 +331,7 @@ static inline u16 sampleHitTexture(const Player& p, const RayHit& hit, float dir
         u = hx - floorf(hx);
         v = hy - floorf(hy);
     }
-    const u16* tex = textureForBlockFace(hit.block, hit.face, topFace);
-    u16 texel = sampleTexture(tex, u, v);
-    if (!texel && hit.block == BLOCK_GLASS) texel = rgb15(22, 26, 28);
+    u16 texel = sampleTexture(textureForBlockFace(hit.block, hit.face, topFace), u, v);
     return texel;
 }
 
@@ -828,19 +786,6 @@ void prepareGameplayTransition() {
     gLastX = 9999.0f;
     gLastY = 9999.0f;
     gLastZ = 9999.0f;
-    gLastHudHealth = -9999;
-    gLastHudAlive = false;
-    gLastHudSelectedBlock = -9999;
-    gLastHudSelectedSlot = -9999;
-    gLastHudBreakTicks = -9999;
-    gLastHudBreakNeeded = -9999;
-    gLastHudMode = -9999;
-    gLastHudMapVisible = false;
-    gLastHudPlayerMapX = -9999;
-    gLastHudPlayerMapZ = -9999;
-    gLastHudCategoryIndex = -9999;
-    gLastHudSelectedItemId = -9999;
-    gLastHudSelectedItemCount = -9999;
 }
 
 void flushTransitionGhosting() {
@@ -904,25 +849,29 @@ void cycleRenderDistance(int delta) {
     gLastZ = 9999.0f;
 }
 
-static RayHit castRayFromPoint(float ox, float oy, float oz, float dirX, float dirY, float dirZ, float maxDist, bool cullHiddenFaces) {
+static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
     RayHit hit{};
     hit.hit = false;
     hit.dist = maxDist;
-    hit.placeX = (int)std::floor(ox);
-    hit.placeY = (int)std::floor(oy);
-    hit.placeZ = (int)std::floor(oz);
+    hit.placeX = (int)std::floor(p.x);
+    hit.placeY = (int)std::floor(p.y + EYE_HEIGHT);
+    hit.placeZ = (int)std::floor(p.z);
+
+    float ox = p.x;
+    float oy = p.y + EYE_HEIGHT;
+    float oz = p.z;
 
     int mapX = (int)std::floor(ox);
     int mapY = (int)std::floor(oy);
     int mapZ = (int)std::floor(oz);
 
-    const float invX = dirX == 0.0f ? 1e9f : std::fabs(1.0f / dirX);
-    const float invY = dirY == 0.0f ? 1e9f : std::fabs(1.0f / dirY);
-    const float invZ = dirZ == 0.0f ? 1e9f : std::fabs(1.0f / dirZ);
+    float invX = dirX == 0.0f ? 1e9f : std::fabs(1.0f / dirX);
+    float invY = dirY == 0.0f ? 1e9f : std::fabs(1.0f / dirY);
+    float invZ = dirZ == 0.0f ? 1e9f : std::fabs(1.0f / dirZ);
 
-    const int stepX = dirX < 0.0f ? -1 : 1;
-    const int stepY = dirY < 0.0f ? -1 : 1;
-    const int stepZ = dirZ < 0.0f ? -1 : 1;
+    int stepX = dirX < 0.0f ? -1 : 1;
+    int stepY = dirY < 0.0f ? -1 : 1;
+    int stepZ = dirZ < 0.0f ? -1 : 1;
 
     float sideX = (dirX < 0.0f) ? (ox - mapX) * invX : (mapX + 1.0f - ox) * invX;
     float sideY = (dirY < 0.0f) ? (oy - mapY) * invY : (mapY + 1.0f - oy) * invY;
@@ -933,8 +882,8 @@ static RayHit castRayFromPoint(float ox, float oy, float oz, float dirX, float d
     int lastZ = mapZ;
     int face = 0;
 
-    for (int i = 0; i < 96; ++i) {
-        float dist = 0.0f;
+    for (int i = 0; i < MAX_RAY_STEPS; ++i) {
+        float dist;
         lastX = mapX;
         lastY = mapY;
         lastZ = mapZ;
@@ -957,50 +906,22 @@ static RayHit castRayFromPoint(float ox, float oy, float oz, float dirX, float d
         }
 
         if (dist > maxDist) break;
-        const int block = getBlock(mapX, mapY, mapZ);
-        if (block == BLOCK_AIR) continue;
-        if (cullHiddenFaces) {
-            const int neighbor = getBlock(lastX, lastY, lastZ);
-            if (!shouldRenderFaceAgainstNeighbor(block, neighbor)) continue;
+        int block = getBlock(mapX, mapY, mapZ);
+        if (block != BLOCK_AIR) {
+            hit.hit = true;
+            hit.block = block;
+            hit.x = mapX;
+            hit.y = mapY;
+            hit.z = mapZ;
+            hit.placeX = lastX;
+            hit.placeY = lastY;
+            hit.placeZ = lastZ;
+            hit.dist = dist;
+            hit.face = face;
+            return hit;
         }
-        hit.hit = true;
-        hit.block = block;
-        hit.x = mapX;
-        hit.y = mapY;
-        hit.z = mapZ;
-        hit.placeX = lastX;
-        hit.placeY = lastY;
-        hit.placeZ = lastZ;
-        hit.dist = dist;
-        hit.face = face;
-        return hit;
     }
 
-    return hit;
-}
-
-static RayHit castRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
-    return castRayFromPoint(p.x, p.y + EYE_HEIGHT, p.z, dirX, dirY, dirZ, maxDist, false);
-}
-
-static RayHit castVisibleRayInternal(const Player& p, float dirX, float dirY, float dirZ, float maxDist) {
-    return castRayFromPoint(p.x, p.y + EYE_HEIGHT, p.z, dirX, dirY, dirZ, maxDist, true);
-}
-
-static RayHit castVisibleRayFromDistance(const Player& p, float dirX, float dirY, float dirZ, float startDist, float maxDist) {
-    const float eps = 0.0025f;
-    const float ox = p.x + dirX * (startDist + eps);
-    const float oy = p.y + EYE_HEIGHT + dirY * (startDist + eps);
-    const float oz = p.z + dirZ * (startDist + eps);
-    const float remain = maxDist - startDist - eps;
-    if (remain <= 0.0f) {
-        RayHit miss{};
-        miss.hit = false;
-        miss.dist = maxDist;
-        return miss;
-    }
-    RayHit hit = castRayFromPoint(ox, oy, oz, dirX, dirY, dirZ, remain, true);
-    if (hit.hit) hit.dist += startDist + eps;
     return hit;
 }
 
@@ -1110,7 +1031,7 @@ void renderFrame(const Player& p) {
             const float dirY = (forwardY + rightY * nx - upY * ny) * invLen;
             const float dirZ = (forwardZ + rightZ * nx - upZ * ny) * invLen;
 
-            RayHit hit = castVisibleRayInternal(p, dirX, dirY, dirZ, getRenderDistance());
+            RayHit hit = castRayInternal(p, dirX, dirY, dirZ, getRenderDistance());
             u16 color;
             if (hit.hit) {
                 bool hl = center.hit && hit.x == center.x && hit.y == center.y && hit.z == center.z;
@@ -1121,18 +1042,7 @@ void renderFrame(const Player& p) {
                 bool emissive = isLightEmitterBlock(hit.block);
                 color = shadeColor(texel, hit.face, hl, fog, light, emissive);
                 if (hit.block == BLOCK_GLASS) {
-                    RayHit behind = castVisibleRayFromDistance(p, dirX, dirY, dirZ, hit.dist, getRenderDistance());
-                    u16 behindColor;
-                    if (behind.hit) {
-                        const bool behindHl = center.hit && behind.x == center.x && behind.y == center.y && behind.z == center.z;
-                        behindColor = shadeHitTexture(p, behind, dirX, dirY, dirZ, eyeY, behindHl);
-                    } else {
-                        int sky = getSkyLightLevel();
-                        behindColor = (py < gRenderH / 2) ? shadeColor(gSkyColor[py], 1, false, 0, sky, false) : shadeColor(gGroundColor[py], 1, false, 0, (sky + 6) / 2, false);
-                    }
-                    const u16 glassTint = shadeColor(rgb15(20, 24, 26), hit.face, hl, fog / 2, light, false);
-                    color = blendColor50(behindColor, glassTint);
-                    if (texel != rgb15(22, 26, 28)) color = blendColor50(color, shadeColor(texel, hit.face, hl, fog / 2, light, false));
+                    color = shadeColor(rgb15(22, 24, 26), hit.face, hl, fog / 2, light, false);
                 }
             } else {
                 int sky = getSkyLightLevel();
@@ -1197,34 +1107,7 @@ static void drawBreakMeter(u16* fb, int x, int y, int progress, int needed) {
 }
 
 void renderHUD(const Player& p, const RayHit& hit, int breakTicks, int breakNeeded) {
-    (void)hit;
     if (!gHudStaticValid || gHudRevision != getWorldRevision()) rebuildHudStatic();
-
-    int selectedItemId = -1;
-    int selectedItemCount = 0;
-    if (!isCreativeMode()) {
-        const InventorySlot& selected = getSelectedSlot(p);
-        if (selected.count > 0) {
-            selectedItemId = selected.id;
-            selectedItemCount = selected.count;
-        }
-    }
-
-    const bool hudDirty = !gHudFrameValid
-        || gLastHudMode != getCurrentGameMode()
-        || gLastHudHealth != p.health
-        || gLastHudAlive != p.alive
-        || gLastHudSelectedBlock != p.selectedBlock
-        || gLastHudSelectedSlot != p.selectedSlot
-        || gLastHudBreakTicks != breakTicks
-        || gLastHudBreakNeeded != breakNeeded
-        || gLastHudMapVisible != gMapVisible
-        || gLastHudPlayerMapX != (int)p.x
-        || gLastHudPlayerMapZ != (int)p.z
-        || gLastHudCategoryIndex != gHudCategoryIndex
-        || gLastHudSelectedItemId != selectedItemId
-        || gLastHudSelectedItemCount != selectedItemCount;
-    if (!hudDirty) return;
 
     ++gHudFrameCounter;
     std::memcpy(gBottomFb, gHudStatic, 192 * 256 * sizeof(u16));
@@ -1304,19 +1187,6 @@ void renderHUD(const Player& p, const RayHit& hit, int breakTicks, int breakNeed
 
     std::memcpy(gHudFrame, gBottomFb, 192 * 256 * sizeof(u16));
     gHudFrameValid = true;
-    gLastHudMode = getCurrentGameMode();
-    gLastHudHealth = p.health;
-    gLastHudAlive = p.alive;
-    gLastHudSelectedBlock = p.selectedBlock;
-    gLastHudSelectedSlot = p.selectedSlot;
-    gLastHudBreakTicks = breakTicks;
-    gLastHudBreakNeeded = breakNeeded;
-    gLastHudMapVisible = gMapVisible;
-    gLastHudPlayerMapX = (int)p.x;
-    gLastHudPlayerMapZ = (int)p.z;
-    gLastHudCategoryIndex = gHudCategoryIndex;
-    gLastHudSelectedItemId = selectedItemId;
-    gLastHudSelectedItemCount = selectedItemCount;
 }
 
 static void blitImage(u16* fb, int dx, int dy, int dw, int dh, const unsigned short* src, int sw, int sh, bool transparent) {

@@ -30,7 +30,8 @@ enum BlockType {
     BLOCK_BOOKSHELF = 24,
     BLOCK_WHITE_WOOL = 25,
     BLOCK_GOLD_BLOCK = 26,
-    BLOCK_IRON_BLOCK = 27
+    BLOCK_IRON_BLOCK = 27,
+    BLOCK_TORCH = 28
 };
 
 static const int WORLD_X = 32;
@@ -58,6 +59,7 @@ struct WorldGenConfig {
     int worldType;
     int sizePreset;
     bool generateTrees;
+    int gameMode;
 };
 
 void initWorld();
@@ -80,4 +82,13 @@ void setBlock(int x, int y, int z, int block);
 bool isSolidBlock(int x, int y, int z);
 bool isOpaqueBlock(int x, int y, int z);
 int getTopVisibleBlock(int x, int z);
+
 int getWorldRevision();
+
+void updateWorldTime(int ticks);
+int getWorldTime();
+bool isDayTime();
+int getSkyLightLevel();
+int getBlockLight(int x, int y, int z);
+int getCombinedLightLevel(int x, int y, int z);
+bool isLightEmitterBlock(int block);

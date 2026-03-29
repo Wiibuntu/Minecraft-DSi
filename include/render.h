@@ -50,6 +50,8 @@ enum MenuAction {
     MENU_ACTION_WORLD_SIZE_PREV,
     MENU_ACTION_WORLD_SIZE_NEXT,
     MENU_ACTION_WORLD_TREES_TOGGLE,
+    MENU_ACTION_WORLD_MODE_PREV,
+    MENU_ACTION_WORLD_MODE_NEXT,
     MENU_ACTION_WORLD_SEED_PREV,
     MENU_ACTION_WORLD_SEED_NEXT,
     MENU_ACTION_WORLD_STEP_PREV,
@@ -60,7 +62,7 @@ enum MenuAction {
 
 void initRenderer();
 void renderFrame(const Player& p);
-void renderHUD(const Player& p, const RayHit& hit);
+void renderHUD(const Player& p, const RayHit& hit, int breakTicks, int breakNeeded);
 RayHit castCenterRay(const Player& p, float maxDist);
 HudTouchAction handleHudTouch(int x, int y);
 

@@ -27,7 +27,7 @@ TARGET   := Minecraft
 BUILD    := build
 SOURCES  := source
 INCLUDES := include build
-DATA     :=
+DATA     := nitrofiles music
 GRAPHICS :=
 AUDIO    :=
 ICON     := icon.bmp
@@ -48,10 +48,10 @@ LDFLAGS := -specs=ds_arm9.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 #---------------------------------------------------------------------------------
 # Libraries
 #---------------------------------------------------------------------------------
-LIBS := -lnds9 -lfat
+LIBS := -lnds9 -lfat -lmm9
 
 # Top-level library roots (must contain include/ and lib/)
-LIBDIRS := $(LIBNDS)
+LIBDIRS := $(PORTLIBS) $(LIBNDS)
 
 #---------------------------------------------------------------------------------
 # Build rules
@@ -83,9 +83,9 @@ export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 # Critical for ds_rules: explicit linker search paths.
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-.PHONY: all clean $(BUILD) gen_textures gen_menu_assets
+.PHONY: all clean $(BUILD) gen_textures gen_menu_assets gen_music
 
-all: gen_textures gen_menu_assets $(BUILD)
+all: gen_textures gen_menu_assets gen_music $(BUILD)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 gen_textures:
@@ -96,12 +96,19 @@ gen_menu_assets:
 	@echo Generating menu assets from bg/logo/font ...
 	@python3 $(CURDIR)/tools/generate_menu_assets.py
 
+gen_music:
+	@python3 $(CURDIR)/tools/generate_music_data.py
+
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).elf $(TARGET).nds $(TARGET).ds.gba
+
+# ensure packaged zips with stale dependency files cannot break fresh builds
+.PHONY: distclean
+distclean: clean
 
 else
 

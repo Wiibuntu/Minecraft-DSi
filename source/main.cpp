@@ -4,6 +4,7 @@
 #include "render.h"
 #include "world.h"
 #include "save_system.h"
+#include "audio_engine.h"
 
 static const int kPlaceableBlocks[] = {
     BLOCK_GRASS,
@@ -32,10 +33,19 @@ static const int kPlaceableBlocks[] = {
     BLOCK_BOOKSHELF,
     BLOCK_WHITE_WOOL,
     BLOCK_GOLD_BLOCK,
-    BLOCK_IRON_BLOCK
+    BLOCK_IRON_BLOCK,
+    BLOCK_TORCH
 };
 
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
+
+struct BreakState {
+    bool active;
+    int x;
+    int y;
+    int z;
+    int ticks;
+};
 
 enum GameModeState {
     STATE_TITLE = 0,
@@ -84,26 +94,47 @@ static void cycleSeedStep(u32& seedStep, int delta) {
     seedStep = kSteps[idx];
 }
 
+static void resetBreakState(BreakState& state) {
+    state.active = false;
+    state.x = state.y = state.z = 0;
+    state.ticks = 0;
+}
+
 int main() {
     irqEnable(IRQ_VBLANK);
 
     initRenderer();
+    initAudioEngine();
 
     Player player;
+    setCurrentGameMode(GAME_MODE_CREATIVE);
     initPlayer(player);
     player.selectedBlock = BLOCK_GRASS;
 
     GameModeState state = STATE_TITLE;
     int animTick = 0;
-    WorldGenConfig newWorldConfig = {nextRandomSeed(), WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true};
+    int worldTickFrameAccum = 0;
+    WorldGenConfig newWorldConfig = {nextRandomSeed(), WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true, GAME_MODE_CREATIVE};
     u32 seedStep = 16u;
     OptionsReturnState optionsReturnState = OPTIONS_RETURN_TITLE;
+    BreakState breakState{};
+    resetBreakState(breakState);
 
     while (1) {
         scanKeys();
         int held = keysHeld();
         int down = keysDown();
         ++animTick;
+        updateAudioEngine(16);
+        if (state == STATE_PLAYING) {
+            ++worldTickFrameAccum;
+            while (worldTickFrameAccum >= 3) {
+                updateWorldTime(1);
+                worldTickFrameAccum -= 3;
+            }
+        } else {
+            worldTickFrameAccum = 0;
+        }
 
         if (state == STATE_TITLE) {
             if (down & KEY_TOUCH) {
@@ -112,11 +143,13 @@ int main() {
                 int action = handleTitleMenuTouch(touch.px, touch.py);
                 if (action == MENU_ACTION_NEW_GAME) {
                     newWorldConfig.seed = nextRandomSeed();
+                    newWorldConfig.gameMode = GAME_MODE_CREATIVE;
                     setPendingWorldConfig(newWorldConfig);
                     invalidateMenuCache();
                     state = STATE_WORLD_SETUP;
                 } else if (action == MENU_ACTION_LOAD_GAME) {
                     if (loadGame(player)) {
+                        resetBreakState(breakState);
                         prepareGameplayTransition();
                         flushTransitionGhosting();
                         state = STATE_PLAYING;
@@ -145,6 +178,7 @@ int main() {
             if (down & KEY_R) newWorldConfig.seed += seedStep;
             if (down & KEY_X) newWorldConfig.generateTrees = !newWorldConfig.generateTrees;
             if (down & KEY_Y) newWorldConfig.seed = nextRandomSeed();
+            if (down & KEY_SELECT) newWorldConfig.gameMode = (newWorldConfig.gameMode + 1) % GAME_MODE_COUNT;
             if (down & KEY_A) {
                 setPendingWorldConfig(newWorldConfig);
                 beginWorldGeneration(newWorldConfig);
@@ -175,6 +209,10 @@ int main() {
                         break;
                     case MENU_ACTION_WORLD_TREES_TOGGLE:
                         newWorldConfig.generateTrees = !newWorldConfig.generateTrees;
+                        break;
+                    case MENU_ACTION_WORLD_MODE_PREV:
+                    case MENU_ACTION_WORLD_MODE_NEXT:
+                        newWorldConfig.gameMode = (newWorldConfig.gameMode + 1) % GAME_MODE_COUNT;
                         break;
                     case MENU_ACTION_WORLD_SEED_PREV:
                         newWorldConfig.seed -= seedStep;
@@ -256,12 +294,14 @@ int main() {
             bool done = generateWorldStep(24);
             renderLoadingScreen(getWorldGenProgress(), animTick);
             if (done) {
+                setCurrentGameMode(newWorldConfig.gameMode);
                 initPlayer(player);
                 player.selectedBlock = BLOCK_GRASS;
+                resetBreakState(breakState);
                 prepareGameplayTransition();
                 flushTransitionGhosting();
                 renderFrame(player);
-                renderHUD(player, castCenterRay(player, 5.0f));
+                renderHUD(player, castCenterRay(player, 5.0f), breakState.ticks, 0);
                 swiWaitForVBlank();
                 state = STATE_PLAYING;
             }
@@ -306,30 +346,81 @@ int main() {
             continue;
         }
 
-        if (down & KEY_SELECT) changeSelectedBlock(player, -1);
-        if (down & KEY_TOUCH) {
-            touchPosition touch;
-            touchRead(&touch);
-            HudTouchAction action = handleHudTouch(touch.px, touch.py);
-            if (action.type == HUD_TOUCH_SELECT_BLOCK) {
-                player.selectedBlock = action.value;
+        if (player.alive) {
+            if (isCreativeMode()) {
+                if (down & KEY_SELECT) changeSelectedBlock(player, -1);
+            } else {
+                if (down & KEY_SELECT) cycleSelectedSlot(player, 1);
             }
-        }
 
-        updatePlayer(player, held, down);
+            if (down & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
+                HudTouchAction action = handleHudTouch(touch.px, touch.py);
+                if (action.type == HUD_TOUCH_SELECT_BLOCK) {
+                    if (isCreativeMode()) player.selectedBlock = action.value;
+                    else setSelectedSlot(player, action.value);
+                }
+            }
+
+            updatePlayer(player, held, down);
+        } else if ((down & KEY_A) && isSurvivalMode()) {
+            respawnPlayer(player);
+            resetBreakState(breakState);
+        }
 
         RayHit hit = castCenterRay(player, 5.0f);
-        if ((down & KEY_L) && hit.hit && !(hit.x == (int)player.x && hit.z == (int)player.z)) {
-            setBlock(hit.x, hit.y, hit.z, BLOCK_AIR);
-        }
-        if ((down & KEY_R) && hit.hit) {
-            if (!isSolidBlock(hit.placeX, hit.placeY, hit.placeZ)) {
-                setBlock(hit.placeX, hit.placeY, hit.placeZ, player.selectedBlock);
+
+        if (player.alive) {
+            if (isCreativeMode()) {
+                if ((down & KEY_L) && hit.hit && !(hit.x == (int)player.x && hit.z == (int)player.z)) {
+                    setBlock(hit.x, hit.y, hit.z, BLOCK_AIR);
+                }
+                if ((down & KEY_R) && hit.hit) {
+                    if (!isSolidBlock(hit.placeX, hit.placeY, hit.placeZ)) {
+                        setBlock(hit.placeX, hit.placeY, hit.placeZ, player.selectedBlock);
+                    }
+                }
+            } else {
+                int selectedTool = getSelectedToolItem(player);
+                if ((down & KEY_R) && !consumeSelectedItemUse(player) && hit.hit) {
+                    int blockToPlace = BLOCK_AIR;
+                    if (consumeSelectedPlacement(player, &blockToPlace) && blockToPlace != BLOCK_AIR) {
+                        if (!isSolidBlock(hit.placeX, hit.placeY, hit.placeZ)) {
+                            setBlock(hit.placeX, hit.placeY, hit.placeZ, blockToPlace);
+                        } else {
+                            addBlockDropToInventory(player, blockToPlace);
+                        }
+                    }
+                }
+                if ((held & KEY_L) && hit.hit && !(hit.x == (int)player.x && hit.z == (int)player.z) && canSurvivalBreakBlock(hit.block, selectedTool)) {
+                    if (!breakState.active || breakState.x != hit.x || breakState.y != hit.y || breakState.z != hit.z) {
+                        breakState.active = true;
+                        breakState.x = hit.x;
+                        breakState.y = hit.y;
+                        breakState.z = hit.z;
+                        breakState.ticks = 0;
+                    }
+                    ++breakState.ticks;
+                    const int needed = getBreakTicksForBlock(hit.block, selectedTool);
+                    if (breakState.ticks >= needed) {
+                        int brokenBlock = getBlock(hit.x, hit.y, hit.z);
+                        setBlock(hit.x, hit.y, hit.z, BLOCK_AIR);
+                        addBlockDropToInventory(player, brokenBlock);
+                        resetBreakState(breakState);
+                    }
+                } else {
+                    resetBreakState(breakState);
+                }
             }
         }
 
         renderFrame(player);
-        renderHUD(player, hit);
+        int breakNeeded = 0;
+        if (breakState.active && hit.hit && hit.x == breakState.x && hit.y == breakState.y && hit.z == breakState.z) {
+            breakNeeded = getBreakTicksForBlock(hit.block, getSelectedToolItem(player));
+        }
+        renderHUD(player, hit, breakState.ticks, breakNeeded);
         swiWaitForVBlank();
     }
 

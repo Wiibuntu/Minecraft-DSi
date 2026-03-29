@@ -1,4 +1,5 @@
 #include "world.h"
+#include "player.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -8,8 +9,8 @@ static u8 gWorld[WORLD_X][WORLD_Y][WORLD_Z];
 static u8 gTopVisible[WORLD_X][WORLD_Z];
 static int gWorldRevision = 0;
 static u32 gWorldSeed = 0;
-static WorldGenConfig gWorldConfig = {0x13579BDFu, WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true};
-static WorldGenConfig gPendingConfig = {0x13579BDFu, WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true};
+static WorldGenConfig gWorldConfig = {0x13579BDFu, WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true, GAME_MODE_CREATIVE};
+static WorldGenConfig gPendingConfig = {0x13579BDFu, WORLD_TYPE_DEFAULT, WORLD_SIZE_CLASSIC, true, GAME_MODE_CREATIVE};
 static int gGenX = 0;
 static int gGenZ = 0;
 static int gWorldGenProgress = 100;
@@ -17,12 +18,45 @@ static int gSpawnX = WORLD_X / 2;
 static int gSpawnY = 10;
 static int gSpawnZ = WORLD_Z / 2;
 static u8 gPerm[512];
+static u8 gTorchLight[WORLD_X][WORLD_Y][WORLD_Z];
+static int gWorldTime = 6000;
+static const int kDayLength = 24000;
 
 static const int kSeaLevel = 5;
 static const int kOceanFloor = 2;
 
 static inline bool inBounds(int x, int y, int z) {
     return x >= 0 && x < WORLD_X && y >= 0 && y < WORLD_Y && z >= 0 && z < WORLD_Z;
+}
+
+bool isLightEmitterBlock(int block) {
+    return block == BLOCK_TORCH;
+}
+
+static void rebuildTorchLight() {
+    std::memset(gTorchLight, 0, sizeof(gTorchLight));
+    for (int x = 0; x < WORLD_X; ++x) {
+        for (int y = 0; y < WORLD_Y; ++y) {
+            for (int z = 0; z < WORLD_Z; ++z) {
+                if (!isLightEmitterBlock(gWorld[x][y][z])) continue;
+                for (int dz = -6; dz <= 6; ++dz) {
+                    for (int dy = -6; dy <= 6; ++dy) {
+                        for (int dx = -6; dx <= 6; ++dx) {
+                            int dist = std::abs(dx) + std::abs(dy) + std::abs(dz);
+                            if (dist > 6) continue;
+                            int ax = x + dx;
+                            int ay = y + dy;
+                            int az = z + dz;
+                            if (!inBounds(ax, ay, az)) continue;
+                            int light = 28 - dist * 4;
+                            if (light < 0) light = 0;
+                            if (gTorchLight[ax][ay][az] < light) gTorchLight[ax][ay][az] = (u8)light;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 static inline u32 mixSeed(u32 seed, int x, int z, u32 salt) {
@@ -172,17 +206,18 @@ void setBlock(int x, int y, int z, int block) {
     if (gWorld[x][y][z] == (u8)block) return;
     gWorld[x][y][z] = (u8)block;
     refreshTopVisibleColumn(x, z);
+    rebuildTorchLight();
     ++gWorldRevision;
 }
 
 bool isSolidBlock(int x, int y, int z) {
     int b = getBlock(x, y, z);
-    return b != BLOCK_AIR && b != BLOCK_WATER;
+    return b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_TORCH;
 }
 
 bool isOpaqueBlock(int x, int y, int z) {
     int b = getBlock(x, y, z);
-    return b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_GLASS;
+    return b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_GLASS && b != BLOCK_TORCH;
 }
 
 int getTopVisibleBlock(int x, int z) {
@@ -192,6 +227,63 @@ int getTopVisibleBlock(int x, int z) {
 
 int getWorldRevision() {
     return gWorldRevision;
+}
+
+void updateWorldTime(int ticks) {
+    if (ticks == 0) return;
+    gWorldTime = (gWorldTime + ticks) % kDayLength;
+    if (gWorldTime < 0) gWorldTime += kDayLength;
+}
+
+int getWorldTime() {
+    return gWorldTime;
+}
+
+bool isDayTime() {
+    return gWorldTime >= 0 && gWorldTime < 12000;
+}
+
+int getSkyLightLevel() {
+    const float t = (float)gWorldTime / (float)kDayLength;
+    const float radians = t * 6.2831853f;
+    float wave = (std::cos(radians - 1.5707963f) + 1.0f) * 0.5f;
+    int light = 6 + (int)std::floor(wave * 25.0f + 0.5f);
+    if (light < 4) light = 4;
+    if (light > 31) light = 31;
+    return light;
+}
+
+int getBlockLight(int x, int y, int z) {
+    if (!inBounds(x, y, z)) return 0;
+    return gTorchLight[x][y][z];
+}
+
+int getCombinedLightLevel(int x, int y, int z) {
+    int sky = getSkyLightLevel();
+    if (inBounds(x, y, z)) {
+        int occlusion = 0;
+        int leafCover = 0;
+        for (int yy = y + 1; yy < WORLD_Y; ++yy) {
+            const int above = getBlock(x, yy, z);
+            if (above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_GLASS || above == BLOCK_TORCH) continue;
+            const bool leaves = (above == BLOCK_LEAVES || above == BLOCK_BIRCH_LEAVES || above == BLOCK_SPRUCE_LEAVES || above == BLOCK_JUNGLE_LEAVES);
+            if (leaves) {
+                ++leafCover;
+                occlusion += 2;
+            } else {
+                occlusion += 6;
+            }
+            if (occlusion >= 26) break;
+        }
+
+        // Keep some ambient skylight even under cover so shadows stay readable.
+        const int skyFloor = 8;
+        sky -= occlusion;
+        if (leafCover > 0) sky += 2;
+        if (sky < skyFloor) sky = skyFloor;
+    }
+    int block = getBlockLight(x, y, z);
+    return sky > block ? sky : block;
 }
 
 u32 getWorldSeed() {
@@ -412,6 +504,8 @@ void beginWorldGeneration(const WorldGenConfig& config) {
     initPerlin(gWorldSeed ^ 0x9E3779B9u);
     std::memset(gWorld, 0, sizeof(gWorld));
     std::memset(gTopVisible, 0, sizeof(gTopVisible));
+    std::memset(gTorchLight, 0, sizeof(gTorchLight));
+    gWorldTime = 6000;
     gWorldRevision = 1;
     gGenX = 0;
     gGenZ = 0;
@@ -476,6 +570,7 @@ bool generateWorldStep(int columnsPerStep) {
         }
         gSpawnX = bestX;
         gSpawnZ = bestZ;
+        rebuildTorchLight();
         gWorldGenProgress = 100;
         ++gWorldRevision;
         return true;
@@ -526,6 +621,7 @@ bool importWorldState(const void* src, int srcSize, const WorldGenConfig* config
     gSpawnX = spawnX;
     gSpawnY = spawnY;
     gSpawnZ = spawnZ;
+    rebuildTorchLight();
     ++gWorldRevision;
     gWorldGenProgress = 100;
     return true;
