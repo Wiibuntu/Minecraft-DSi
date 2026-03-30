@@ -20,7 +20,8 @@ struct RayHit {
 enum HudTouchType {
     HUD_TOUCH_NONE = 0,
     HUD_TOUCH_SELECT_BLOCK = 1,
-    HUD_TOUCH_TOGGLE_MAP = 2
+    HUD_TOUCH_TOGGLE_MAP = 2,
+    HUD_TOUCH_OPEN_CRAFTING = 3
 };
 
 struct HudTouchAction {
@@ -86,3 +87,5 @@ int getRenderHeight();
 void setRenderResolution(int width, int height);
 float getRenderDistance();
 void cycleRenderDistance(int delta);
+
+void renderCraftingMenu(const Player& p, int tab, int selectedIndex, bool nearTable);

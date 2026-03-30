@@ -2,6 +2,9 @@
 #include "texture_data.h"
 #include "menu_assets.h"
 #include "world.h"
+#include "crafting.h"
+#include "mob.h"
+#include "mob_assets.h"
 
 #include <nds.h>
 #include <cmath>
@@ -48,7 +51,10 @@ static const int kPlaceableBlocks[] = {
     BLOCK_WHITE_WOOL,
     BLOCK_GOLD_BLOCK,
     BLOCK_IRON_BLOCK,
-    BLOCK_TORCH
+    BLOCK_TORCH,
+    BLOCK_CRAFTING_TABLE,
+    BLOCK_FURNACE,
+    BLOCK_COAL_ORE
 };
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
 
@@ -146,6 +152,7 @@ static int gLastLoadingProgress = -1;
 static int gLastGraphicsSlider = -1;
 
 static inline u16 rgb15(int r, int g, int b);
+static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float forwardY, float forwardZ, float rightX, float rightY, float rightZ, float upX, float upY, float upZ);
 
 static const char* renderDistanceName() {
     static const char* kNames[] = {"SHORT", "NORMAL", "FAR"};
@@ -187,6 +194,9 @@ static const char* blockName(int block) {
         case BLOCK_GOLD_BLOCK: return "GOLD";
         case BLOCK_IRON_BLOCK: return "IRON";
         case BLOCK_TORCH: return "TORCH";
+        case BLOCK_CRAFTING_TABLE: return "CRAFTTAB";
+        case BLOCK_FURNACE: return "FURNACE";
+        case BLOCK_COAL_ORE: return "COALORE";
         default: return "BLOCK";
     }
 }
@@ -333,6 +343,13 @@ static const u16* textureForBlockFace(int block, int face, bool topFace) {
         case BLOCK_GOLD_BLOCK: return TEX_GOLD_BLOCK;
         case BLOCK_IRON_BLOCK: return TEX_IRON_BLOCK;
         case BLOCK_TORCH: return TEX_TORCH;
+        case BLOCK_CRAFTING_TABLE:
+            if (topFace) return TEX_CRAFTING_TABLE_TOP;
+            return face == 0 ? TEX_CRAFTING_TABLE_FRONT : TEX_CRAFTING_TABLE_SIDE;
+        case BLOCK_FURNACE:
+            if (topFace) return TEX_FURNACE_TOP;
+            return face == 0 ? TEX_FURNACE_FRONT : TEX_FURNACE_SIDE;
+        case BLOCK_COAL_ORE: return TEX_COAL_ORE;
         default: return TEX_STONE;
     }
 }
@@ -603,11 +620,16 @@ static void drawHeldHand(u16* fb) {
 static const u16* textureForItem(int item) {
     switch (item) {
         case ITEM_APPLE: return TEX_ITEM_APPLE;
+        case ITEM_STICK: return TEX_ITEM_STICK;
+        case ITEM_COAL: return TEX_ITEM_COAL;
         case ITEM_WOOD_PICKAXE: return TEX_ITEM_WOOD_PICKAXE;
         case ITEM_STONE_PICKAXE: return TEX_ITEM_STONE_PICKAXE;
         case ITEM_WOOD_AXE: return TEX_ITEM_WOOD_AXE;
+        case ITEM_STONE_AXE: return TEX_ITEM_STONE_AXE;
         case ITEM_WOOD_SHOVEL: return TEX_ITEM_WOOD_SHOVEL;
+        case ITEM_STONE_SHOVEL: return TEX_ITEM_STONE_SHOVEL;
         case ITEM_WOOD_SWORD: return TEX_ITEM_WOOD_SWORD;
+        case ITEM_STONE_SWORD: return TEX_ITEM_STONE_SWORD;
         default: return nullptr;
     }
 }
@@ -615,11 +637,16 @@ static const u16* textureForItem(int item) {
 static const char* itemName(int item) {
     switch (item) {
         case ITEM_APPLE: return "APPLE";
+        case ITEM_STICK: return "STICK";
+        case ITEM_COAL: return "COAL";
         case ITEM_WOOD_PICKAXE: return "WOODPICK";
         case ITEM_STONE_PICKAXE: return "STONEPK";
         case ITEM_WOOD_AXE: return "WOODAXE";
+        case ITEM_STONE_AXE: return "STONEAXE";
         case ITEM_WOOD_SHOVEL: return "WOODSHVL";
+        case ITEM_STONE_SHOVEL: return "STONESHV";
         case ITEM_WOOD_SWORD: return "WOODSWRD";
+        case ITEM_STONE_SWORD: return "STONESWD";
         default: return "ITEM";
     }
 }
@@ -1067,6 +1094,10 @@ HudTouchAction handleHudTouch(int x, int y) {
     const int slotW = 22;
     const int slotY = 100;
     const int slotX = 19;
+    if (x >= 184 && x < 246 && y >= 58 && y < 82) {
+        action.type = HUD_TOUCH_OPEN_CRAFTING;
+        return action;
+    }
     for (int i = 0; i < HOTBAR_SIZE; ++i) {
         int x0 = slotX + i * 24;
         if (x >= x0 && x < x0 + slotW && y >= slotY && y < slotY + 22) {
@@ -1142,6 +1173,8 @@ void renderFrame(const Player& p) {
         }
     }
 
+    drawMobBillboards(p, eyeY, forwardX, forwardY, forwardZ, rightX, rightY, rightZ, upX, upY, upZ);
+
     for (int y = 0; y < SCREEN_H; ++y) {
         const u16* src = gLowRes[gYMap[y]];
         u16* dst = gTopFb + y * 256;
@@ -1169,6 +1202,210 @@ void renderFrame(const Player& p) {
     gLastY = p.y;
     gLastZ = p.z;
     gLastWorldRevision3D = getWorldRevision();
+}
+
+
+
+struct CamPt {
+    float x;
+    float y;
+    float z;
+};
+
+struct CuboidDef {
+    float minX, minY, minZ;
+    float maxX, maxY, maxZ;
+    u16 frontColor, backColor, leftColor, rightColor, topColor, bottomColor;
+};
+
+struct RenderFace {
+    ScreenPt p[4];
+    float depth;
+    u16 color;
+};
+
+static void fillTriangleLowRes(ScreenPt a, ScreenPt b, ScreenPt c, u16 color) {
+    int minX = a.x, maxX = a.x, minY = a.y, maxY = a.y;
+    if (b.x < minX) minX = b.x; if (c.x < minX) minX = c.x;
+    if (b.x > maxX) maxX = b.x; if (c.x > maxX) maxX = c.x;
+    if (b.y < minY) minY = b.y; if (c.y < minY) minY = c.y;
+    if (b.y > maxY) maxY = b.y; if (c.y > maxY) maxY = c.y;
+    if (maxX < 0 || maxY < 0 || minX >= gRenderW || minY >= gRenderH) return;
+    if (minX < 0) minX = 0; if (minY < 0) minY = 0;
+    if (maxX >= gRenderW) maxX = gRenderW - 1; if (maxY >= gRenderH) maxY = gRenderH - 1;
+    const int area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (area == 0) return;
+    for (int y = minY; y <= maxY; ++y) {
+        for (int x = minX; x <= maxX; ++x) {
+            const int w0 = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+            const int w1 = (c.x - b.x) * (y - b.y) - (c.y - b.y) * (x - b.x);
+            const int w2 = (a.x - c.x) * (y - c.y) - (a.y - c.y) * (x - c.x);
+            if ((area > 0 && w0 >= 0 && w1 >= 0 && w2 >= 0) || (area < 0 && w0 <= 0 && w1 <= 0 && w2 <= 0)) {
+                gLowRes[y][x] = color;
+            }
+        }
+    }
+}
+
+static void fillQuadLowRes(ScreenPt a, ScreenPt b, ScreenPt c, ScreenPt d, u16 color) {
+    fillTriangleLowRes(a, b, c, color);
+    fillTriangleLowRes(a, c, d, color);
+}
+
+static inline CamPt toCameraSpace(float wx, float wy, float wz, const Player& p, float eyeY,
+        float forwardX, float forwardY, float forwardZ,
+        float rightX, float rightY, float rightZ,
+        float upX, float upY, float upZ) {
+    float dx = wx - p.x;
+    float dy = wy - eyeY;
+    float dz = wz - p.z;
+    CamPt c;
+    c.x = dx * rightX + dy * rightY + dz * rightZ;
+    c.y = -(dx * upX + dy * upY + dz * upZ);
+    c.z = dx * forwardX + dy * forwardY + dz * forwardZ;
+    return c;
+}
+
+static inline ScreenPt cameraToScreen(const CamPt& c) {
+    const float aspect = (float)gRenderW / (float)gRenderH;
+    const float invZ = 1.0f / c.z;
+    ScreenPt s;
+    s.x = (int)((c.x * invZ / (FOV * aspect) + 1.0f) * 0.5f * gRenderW);
+    s.y = (int)((c.y * invZ / FOV + 1.0f) * 0.5f * gRenderH);
+    return s;
+}
+
+static inline u16 sampleMobColor(int x0, int y0, int w, int h) {
+    long rs = 0, gs = 0, bs = 0, n = 0;
+    for (int y = y0; y < y0 + h; ++y) {
+        for (int x = x0; x < x0 + w; ++x) {
+            u16 c = TEX_MOB_PIG[y * MOB_TEX_W + x];
+            rs += (c & 31);
+            gs += ((c >> 5) & 31);
+            bs += ((c >> 10) & 31);
+            ++n;
+        }
+    }
+    if (n <= 0) return rgb15(24, 18, 18);
+    return rgb15((int)(rs / n), (int)(gs / n), (int)(bs / n));
+}
+
+static int appendCuboidFaces(RenderFace* outFaces, int faceCount, const CuboidDef& cuboid, const Mob& mob,
+        const Player& p, float eyeY,
+        float forwardX, float forwardY, float forwardZ,
+        float rightX, float rightY, float rightZ,
+        float upX, float upY, float upZ,
+        int fog, int light) {
+    const float cy = std::cosf(mob.yaw);
+    const float sy = std::sinf(mob.yaw);
+    auto tx = [&](float lx, float lz, float& ox, float& oz) {
+        ox = lx * cy + lz * sy;
+        oz = -lx * sy + lz * cy;
+    };
+    const float vx[8] = {cuboid.minX, cuboid.maxX, cuboid.maxX, cuboid.minX, cuboid.minX, cuboid.maxX, cuboid.maxX, cuboid.minX};
+    const float vy[8] = {cuboid.minY, cuboid.minY, cuboid.maxY, cuboid.maxY, cuboid.minY, cuboid.minY, cuboid.maxY, cuboid.maxY};
+    const float vz[8] = {cuboid.minZ, cuboid.minZ, cuboid.minZ, cuboid.minZ, cuboid.maxZ, cuboid.maxZ, cuboid.maxZ, cuboid.maxZ};
+    CamPt cam[8];
+    ScreenPt scr[8];
+    for (int i = 0; i < 8; ++i) {
+        float rx, rz;
+        tx(vx[i], vz[i], rx, rz);
+        cam[i] = toCameraSpace(mob.x + rx, mob.y + vy[i], mob.z + rz, p, eyeY, forwardX, forwardY, forwardZ, rightX, rightY, rightZ, upX, upY, upZ);
+        if (cam[i].z < 0.08f) cam[i].z = 0.08f;
+        scr[i] = cameraToScreen(cam[i]);
+    }
+    struct FaceInfo { int i0,i1,i2,i3; float nx,ny,nz; float cx,cy,cz; u16 color; };
+    FaceInfo faces[6] = {
+        {0,1,2,3, 0,0,-1, (cuboid.minX+cuboid.maxX)*0.5f, (cuboid.minY+cuboid.maxY)*0.5f, cuboid.minZ, cuboid.frontColor},
+        {5,4,7,6, 0,0, 1, (cuboid.minX+cuboid.maxX)*0.5f, (cuboid.minY+cuboid.maxY)*0.5f, cuboid.maxZ, cuboid.backColor},
+        {4,0,3,7,-1,0, 0, cuboid.minX, (cuboid.minY+cuboid.maxY)*0.5f, (cuboid.minZ+cuboid.maxZ)*0.5f, cuboid.leftColor},
+        {1,5,6,2, 1,0, 0, cuboid.maxX, (cuboid.minY+cuboid.maxY)*0.5f, (cuboid.minZ+cuboid.maxZ)*0.5f, cuboid.rightColor},
+        {3,2,6,7, 0,1, 0, (cuboid.minX+cuboid.maxX)*0.5f, cuboid.maxY, (cuboid.minZ+cuboid.maxZ)*0.5f, cuboid.topColor},
+        {4,5,1,0, 0,-1,0, (cuboid.minX+cuboid.maxX)*0.5f, cuboid.minY, (cuboid.minZ+cuboid.maxZ)*0.5f, cuboid.bottomColor},
+    };
+    for (int fi = 0; fi < 6; ++fi) {
+        float rnx, rnz, rcx, rcz;
+        tx(faces[fi].nx, faces[fi].nz, rnx, rnz);
+        tx(faces[fi].cx, faces[fi].cz, rcx, rcz);
+        float wcx = mob.x + rcx;
+        float wcy = mob.y + faces[fi].cy;
+        float wcz = mob.z + rcz;
+        float toCamX = p.x - wcx;
+        float toCamY = eyeY - wcy;
+        float toCamZ = p.z - wcz;
+        if (rnx * toCamX + faces[fi].ny * toCamY + rnz * toCamZ <= 0.0f) continue;
+        float depth = 0.25f * (cam[faces[fi].i0].z + cam[faces[fi].i1].z + cam[faces[fi].i2].z + cam[faces[fi].i3].z);
+        RenderFace& out = outFaces[faceCount++];
+        out.p[0] = scr[faces[fi].i0]; out.p[1] = scr[faces[fi].i1]; out.p[2] = scr[faces[fi].i2]; out.p[3] = scr[faces[fi].i3];
+        out.depth = depth;
+        out.color = shadeColor(faces[fi].color, 1, false, fog + (int)(depth * 1.5f), light, false);
+    }
+    return faceCount;
+}
+
+static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float forwardY, float forwardZ, float rightX, float rightY, float rightZ, float upX, float upY, float upZ) {
+    // Full 64x32 pig skin sampling. The previous path downscaled the mob texture to 32x16,
+    // which blurred face-region lookups and made the block model read as garbled.
+    const u16 headFront = sampleMobColor(16, 16, 16, 16);
+    const u16 headSide = sampleMobColor(0, 16, 16, 16);
+    const u16 headTop = sampleMobColor(16, 0, 16, 16);
+    const u16 snoutFront = sampleMobColor(34, 34, 8, 6);
+    const u16 snoutSide = sampleMobColor(32, 34, 2, 6);
+    const u16 snoutTop = sampleMobColor(34, 32, 8, 2);
+    const u16 bodyFront = sampleMobColor(40, 16, 16, 16);
+    const u16 bodySide = sampleMobColor(56, 16, 8, 16);
+    const u16 bodyTop = sampleMobColor(40, 0, 16, 16);
+    const u16 legFront = sampleMobColor(8, 40, 8, 12);
+    const u16 legSide = sampleMobColor(0, 40, 8, 12);
+    const u16 legTop = sampleMobColor(8, 32, 8, 8);
+
+    for (int i = 0; i < getMobCount(); ++i) {
+        const Mob* mob = getMob(i);
+        if (!mob || !mob->active || mob->type != MOB_PIG) continue;
+        float dx = mob->x - p.x;
+        float dy = (mob->y + 0.5f) - eyeY;
+        float dz = mob->z - p.z;
+        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > getRenderDistance() || dist < 0.08f) continue;
+        float invDist = 1.0f / dist;
+        RayHit occlude = castVisibleRayInternal(p, dx * invDist, dy * invDist, dz * invDist, getRenderDistance());
+        if (occlude.hit && occlude.dist < dist - 0.35f) continue;
+        int light = getCombinedLightLevel((int)mob->x, (int)mob->y, (int)mob->z);
+        int fog = (int)(dist * 2.0f);
+
+        const float legLiftA = std::sinf((float)mob->animTick * 0.25f) * 0.03f;
+        const float legLiftB = -legLiftA;
+        // Canonical quadruped proportions: 4x6x4 legs, 10x8x16 body, 8x8x8 head, scaled to a 1-block-high pig.
+        CuboidDef parts[6] = {
+            {-0.20f, 0.00f + legLiftA, -0.40f, -0.06f, 0.38f + legLiftA, -0.24f, legFront, legFront, legSide, legSide, legTop, legTop},
+            { 0.06f, 0.00f + legLiftB, -0.40f,  0.20f, 0.38f + legLiftB, -0.24f, legFront, legFront, legSide, legSide, legTop, legTop},
+            {-0.20f, 0.00f + legLiftB,  0.18f, -0.06f, 0.38f + legLiftB,  0.34f, legFront, legFront, legSide, legSide, legTop, legTop},
+            { 0.06f, 0.00f + legLiftA,  0.18f,  0.20f, 0.38f + legLiftA,  0.34f, legFront, legFront, legSide, legSide, legTop, legTop},
+            {-0.34f, 0.30f, -0.38f,  0.34f, 0.72f,  0.38f, bodyFront, bodyFront, bodySide, bodySide, bodyTop, bodyTop},
+            {-0.24f, 0.42f, -0.70f,  0.24f, 0.86f, -0.22f, headFront, headFront, headSide, headSide, headTop, headTop},
+        };
+        CuboidDef snout = {-0.12f, 0.50f, -0.82f, 0.12f, 0.68f, -0.70f, snoutFront, snoutFront, snoutSide, snoutSide, snoutTop, snoutTop};
+
+        RenderFace faces[42];
+        int faceCount = 0;
+        for (int pi = 0; pi < 6; ++pi) {
+            faceCount = appendCuboidFaces(faces, faceCount, parts[pi], *mob, p, eyeY, forwardX, forwardY, forwardZ, rightX, rightY, rightZ, upX, upY, upZ, fog, light);
+        }
+        faceCount = appendCuboidFaces(faces, faceCount, snout, *mob, p, eyeY, forwardX, forwardY, forwardZ, rightX, rightY, rightZ, upX, upY, upZ, fog, light);
+
+        for (int a = 0; a < faceCount; ++a) {
+            for (int b = a + 1; b < faceCount; ++b) {
+                if (faces[a].depth < faces[b].depth) {
+                    RenderFace tmp = faces[a];
+                    faces[a] = faces[b];
+                    faces[b] = tmp;
+                }
+            }
+        }
+        for (int fi = 0; fi < faceCount; ++fi) {
+            fillQuadLowRes(faces[fi].p[0], faces[fi].p[1], faces[fi].p[2], faces[fi].p[3], faces[fi].color);
+        }
+    }
 }
 
 static void drawHeart(u16* fb, int x, int y, bool full, bool half) {
@@ -1268,6 +1505,9 @@ void renderHUD(const Player& p, const RayHit& hit, int breakTicks, int breakNeed
         }
         drawTextPixel(gBottomFb, 20, 76, p.alive ? "HEALTH" : "YOU DIED", rgb15(31, 31, 31));
         drawTextPixel(gBottomFb, 150, 56, getGameModeName(getCurrentGameMode()), rgb15(26, 28, 30));
+        drawRect(gBottomFb, 184, 58, 62, 24, rgb15(10, 10, 12));
+        drawRect(gBottomFb, 186, 60, 58, 20, rgb15(22, 22, 24));
+        drawTextPixel(gBottomFb, 198, 67, "CRAFT", rgb15(31, 31, 31));
 
         const int slotW = 22;
         const int slotY = 100;
@@ -1670,4 +1910,54 @@ int handlePauseMenuTouch(int x, int y) {
     if (buttonHit(x, y, bx, 124, bw, bh)) return MENU_ACTION_OPTIONS;
     if (buttonHit(x, y, bx, 160, bw, 24)) return MENU_ACTION_QUIT_TO_TITLE;
     return MENU_ACTION_NONE;
+}
+
+
+void renderCraftingMenu(const Player& p, int tab, int selectedIndex, bool nearTable) {
+    if (gHudStaticValid) {
+        std::memcpy(gBottomFb, &gHudStatic[0][0], 192 * 256 * sizeof(u16));
+    }
+    drawRect(gBottomFb, 8, 10, 240, 172, rgb15(4, 4, 6));
+    drawRect(gBottomFb, 12, 14, 232, 164, rgb15(18, 18, 20));
+    drawTextPixelScaled(gBottomFb, 20, 20, nearTable ? "CRAFT TABLE" : "CRAFTING", rgb15(31,31,31), 2);
+    drawTextPixel(gBottomFb, 18, 36, nearTable ? "L R TABS  DPAD SELECT  A CRAFT  B BACK" : "BASICS ANYWHERE  TABLE RECIPES LOCKED", rgb15(29,29,29));
+
+    for (int i = 0; i < getCraftingTabCount(); ++i) {
+        int x = 18 + i * 74;
+        drawRect(gBottomFb, x, 48, 68, 18, i == tab ? rgb15(26,26,28) : rgb15(9,9,11));
+        drawTextPixel(gBottomFb, x + 8, 54, getCraftingTabName(i), rgb15(31,31,31));
+    }
+
+    const int count = getRecipeCountForTab(tab, nearTable);
+    const int scroll = selectedIndex < 6 ? 0 : (selectedIndex - 5);
+    for (int i = 0; i < 6; ++i) {
+        const int recipeIndex = scroll + i;
+        int y = 74 + i * 16;
+        drawRect(gBottomFb, 18, y, 220, 14, recipeIndex == selectedIndex ? rgb15(24,24,26) : rgb15(10,10,12));
+        const CraftingRecipe* recipe = getRecipeForTabIndex(tab, recipeIndex, nearTable);
+        if (!recipe) continue;
+        drawTextPixel(gBottomFb, 22, y + 4, recipe->name, rgb15(31,31,31));
+        drawTextPixel(gBottomFb, 120, y + 4, canCraftRecipe(p, *recipe, nearTable) ? "READY" : "MISS", rgb15(31,31,31));
+        drawTextPixel(gBottomFb, 170, y + 4, recipe->outputIsBlock ? blockName(recipe->outputId) : itemName(recipe->outputId), rgb15(29,29,29));
+    }
+
+    if (count <= 0) {
+        drawTextPixel(gBottomFb, 56, 98, nearTable ? "NO RECIPES" : "PLACE OR STAND NEAR A CRAFT TABLE", rgb15(31,31,31));
+    } else {
+        const CraftingRecipe* recipe = getRecipeForTabIndex(tab, selectedIndex, nearTable);
+        if (recipe) {
+            drawRect(gBottomFb, 18, 172-34, 220, 28, rgb15(8,8,10));
+            drawTextPixel(gBottomFb, 22, 142, recipe->tableOnly ? "TABLE ONLY" : "HAND CRAFT", rgb15(31,31,31));
+            int cx = 100;
+            for (int i = 0; i < recipe->ingredientCount; ++i) {
+                const InventorySlot& ing = recipe->ingredients[i];
+                const u16* tex = ing.isBlock ? textureForBlockFace(ing.id, 1, true) : textureForItem(ing.id);
+                drawIconTexture(gBottomFb, cx + i * 32, 136, tex, false);
+                char cnt[8];
+                std::snprintf(cnt, sizeof(cnt), "%d", ing.count);
+                drawTextPixel(gBottomFb, cx + i * 32 + 12, 158, cnt, rgb15(31,31,31));
+            }
+            drawTextPixel(gBottomFb, 22, 156, recipe->outputCount > 1 ? "OUTPUT XN" : "OUTPUT X1", rgb15(31,31,31));
+        }
+    }
 }

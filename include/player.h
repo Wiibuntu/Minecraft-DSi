@@ -11,11 +11,16 @@ enum GameMode {
 enum ItemType {
     ITEM_NONE = 0,
     ITEM_APPLE,
+    ITEM_STICK,
+    ITEM_COAL,
     ITEM_WOOD_PICKAXE,
     ITEM_STONE_PICKAXE,
     ITEM_WOOD_AXE,
+    ITEM_STONE_AXE,
     ITEM_WOOD_SHOVEL,
-    ITEM_WOOD_SWORD
+    ITEM_STONE_SHOVEL,
+    ITEM_WOOD_SWORD,
+    ITEM_STONE_SWORD
 };
 
 static const int HOTBAR_SIZE = 9;

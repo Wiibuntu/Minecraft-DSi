@@ -1,5 +1,6 @@
 #include "player.h"
 #include "world.h"
+#include "crafting.h"
 
 #include <nds.h>
 #include <cmath>
@@ -54,8 +55,11 @@ static bool isToolItem(int item) {
         case ITEM_WOOD_PICKAXE:
         case ITEM_STONE_PICKAXE:
         case ITEM_WOOD_AXE:
+        case ITEM_STONE_AXE:
         case ITEM_WOOD_SHOVEL:
+        case ITEM_STONE_SHOVEL:
         case ITEM_WOOD_SWORD:
+        case ITEM_STONE_SWORD:
             return true;
         default:
             return false;
@@ -98,6 +102,10 @@ static int hardnessForBlock(int block) {
             return 9999;
         case BLOCK_TORCH:
             return 4;
+        case BLOCK_CRAFTING_TABLE:
+        case BLOCK_FURNACE:
+        case BLOCK_COAL_ORE:
+            return 28;
         default:
             return 18;
     }
@@ -112,6 +120,8 @@ static bool isPickaxeBlock(int block) {
         case BLOCK_OBSIDIAN:
         case BLOCK_GOLD_BLOCK:
         case BLOCK_IRON_BLOCK:
+        case BLOCK_FURNACE:
+        case BLOCK_COAL_ORE:
             return true;
         default:
             return false;
@@ -129,6 +139,7 @@ static bool isAxeBlock(int block) {
         case BLOCK_SPRUCE_PLANKS:
         case BLOCK_JUNGLE_PLANKS:
         case BLOCK_BOOKSHELF:
+        case BLOCK_CRAFTING_TABLE:
             return true;
         default:
             return false;
@@ -150,9 +161,11 @@ static bool isShovelBlock(int block) {
 static int toolSpeedBonus(int block, int toolItem) {
     if (toolItem == ITEM_STONE_PICKAXE && isPickaxeBlock(block)) return 18;
     if (toolItem == ITEM_WOOD_PICKAXE && isPickaxeBlock(block)) return 12;
+    if (toolItem == ITEM_STONE_AXE && isAxeBlock(block)) return 14;
     if (toolItem == ITEM_WOOD_AXE && isAxeBlock(block)) return 10;
+    if (toolItem == ITEM_STONE_SHOVEL && isShovelBlock(block)) return 14;
     if (toolItem == ITEM_WOOD_SHOVEL && isShovelBlock(block)) return 10;
-    if (toolItem == ITEM_WOOD_SWORD && (block == BLOCK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES || block == BLOCK_JUNGLE_LEAVES)) return 10;
+    if ((toolItem == ITEM_WOOD_SWORD || toolItem == ITEM_STONE_SWORD) && (block == BLOCK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES || block == BLOCK_JUNGLE_LEAVES)) return 10 + (toolItem == ITEM_STONE_SWORD ? 4 : 0);
     return 0;
 }
 
@@ -181,15 +194,15 @@ void resetHotbar(Player& p) {
 
 void initSurvivalLoadout(Player& p) {
     clearHotbar(p);
-    p.hotbar[0] = {true, BLOCK_DIRT, 32};
-    p.hotbar[1] = {true, BLOCK_PLANKS, 24};
-    p.hotbar[2] = {true, BLOCK_TORCH, 16};
+    p.hotbar[0] = {true, BLOCK_WOOD, 8};
+    p.hotbar[1] = {true, BLOCK_PLANKS, 16};
+    p.hotbar[2] = {false, ITEM_COAL, 4};
     p.hotbar[3] = {false, ITEM_APPLE, 5};
     p.hotbar[4] = {false, ITEM_WOOD_PICKAXE, 1};
-    p.hotbar[5] = {false, ITEM_STONE_PICKAXE, 1};
-    p.hotbar[6] = {false, ITEM_WOOD_AXE, 1};
-    p.hotbar[7] = {false, ITEM_WOOD_SHOVEL, 1};
-    p.hotbar[8] = {false, ITEM_WOOD_SWORD, 1};
+    p.hotbar[5] = {false, ITEM_WOOD_AXE, 1};
+    p.hotbar[6] = {false, ITEM_WOOD_SHOVEL, 1};
+    p.hotbar[7] = {false, ITEM_WOOD_SWORD, 1};
+    p.hotbar[8] = {true, BLOCK_CRAFTING_TABLE, 1};
     p.selectedSlot = 0;
 }
 
@@ -390,6 +403,24 @@ bool consumeSelectedItemUse(Player& p) {
 
 bool addBlockDropToInventory(Player& p, int block) {
     if (isCreativeMode() || block == BLOCK_AIR || block == BLOCK_WATER) return true;
+    if (block == BLOCK_COAL_ORE) {
+        for (int i = 0; i < HOTBAR_SIZE; ++i) {
+            InventorySlot& slot = p.hotbar[i];
+            if (!slot.isBlock && slot.id == ITEM_COAL && slot.count < 99) {
+                ++slot.count;
+                return true;
+            }
+        }
+        for (int i = 0; i < HOTBAR_SIZE; ++i) {
+            InventorySlot& slot = p.hotbar[i];
+            if (slot.count <= 0) {
+                slot = {false, ITEM_COAL, 1};
+                return true;
+            }
+        }
+        return false;
+    }
+    block = getBlockDropForSurvival(block);
     for (int i = 0; i < HOTBAR_SIZE; ++i) {
         InventorySlot& slot = p.hotbar[i];
         if (slot.isBlock && slot.id == block && slot.count < 99) {
@@ -410,6 +441,7 @@ bool addBlockDropToInventory(Player& p, int block) {
 bool canSurvivalBreakBlock(int block, int toolItem) {
     if (block == BLOCK_AIR || block == BLOCK_WATER) return false;
     if (block == BLOCK_OBSIDIAN) return toolItem == ITEM_STONE_PICKAXE;
+    if (block == BLOCK_GOLD_BLOCK || block == BLOCK_IRON_BLOCK || block == BLOCK_FURNACE || block == BLOCK_COAL_ORE) return toolItem == ITEM_WOOD_PICKAXE || toolItem == ITEM_STONE_PICKAXE;
     return true;
 }
 

@@ -31,7 +31,10 @@ enum BlockType {
     BLOCK_WHITE_WOOL = 25,
     BLOCK_GOLD_BLOCK = 26,
     BLOCK_IRON_BLOCK = 27,
-    BLOCK_TORCH = 28
+    BLOCK_TORCH = 28,
+    BLOCK_CRAFTING_TABLE = 29,
+    BLOCK_FURNACE = 30,
+    BLOCK_COAL_ORE = 31
 };
 
 static const int WORLD_X = 32;
@@ -92,3 +95,6 @@ int getSkyLightLevel();
 int getBlockLight(int x, int y, int z);
 int getCombinedLightLevel(int x, int y, int z);
 bool isLightEmitterBlock(int block);
+
+
+bool isNaturalSurfaceBlock(int block);

@@ -5,6 +5,8 @@
 #include "world.h"
 #include "save_system.h"
 #include "audio_engine.h"
+#include "crafting.h"
+#include "mob.h"
 
 static const int kPlaceableBlocks[] = {
     BLOCK_GRASS,
@@ -34,7 +36,10 @@ static const int kPlaceableBlocks[] = {
     BLOCK_WHITE_WOOL,
     BLOCK_GOLD_BLOCK,
     BLOCK_IRON_BLOCK,
-    BLOCK_TORCH
+    BLOCK_TORCH,
+    BLOCK_CRAFTING_TABLE,
+    BLOCK_FURNACE,
+    BLOCK_COAL_ORE
 };
 
 static const int kPlaceableBlockCount = sizeof(kPlaceableBlocks) / sizeof(kPlaceableBlocks[0]);
@@ -54,6 +59,7 @@ enum GameModeState {
     STATE_GRAPHICS,
     STATE_LOADING,
     STATE_PLAYING,
+    STATE_CRAFTING,
     STATE_PAUSED
 };
 
@@ -105,6 +111,7 @@ int main() {
 
     initRenderer();
     initAudioEngine();
+    initMobs();
 
     Player player;
     setCurrentGameMode(GAME_MODE_CREATIVE);
@@ -119,6 +126,8 @@ int main() {
     OptionsReturnState optionsReturnState = OPTIONS_RETURN_TITLE;
     BreakState breakState{};
     resetBreakState(breakState);
+    int craftingTab = 0;
+    int craftingSelection = 0;
 
     while (1) {
         scanKeys();
@@ -149,6 +158,7 @@ int main() {
                     state = STATE_WORLD_SETUP;
                 } else if (action == MENU_ACTION_LOAD_GAME) {
                     if (loadGame(player)) {
+                        spawnWorldMobs();
                         resetBreakState(breakState);
                         prepareGameplayTransition();
                         flushTransitionGhosting();
@@ -298,6 +308,7 @@ int main() {
                 initPlayer(player);
                 player.selectedBlock = BLOCK_GRASS;
                 resetBreakState(breakState);
+                spawnWorldMobs();
                 prepareGameplayTransition();
                 flushTransitionGhosting();
                 renderFrame(player);
@@ -305,6 +316,38 @@ int main() {
                 swiWaitForVBlank();
                 state = STATE_PLAYING;
             }
+            swiWaitForVBlank();
+            continue;
+        }
+
+        if (state == STATE_CRAFTING) {
+            bool nearTable = isPlayerNearCraftingTable(player);
+            if (down & KEY_B) {
+                state = STATE_PLAYING;
+                swiWaitForVBlank();
+                continue;
+            }
+            if (down & KEY_L) {
+                craftingTab = (craftingTab + getCraftingTabCount() - 1) % getCraftingTabCount();
+                craftingSelection = 0;
+            }
+            if (down & KEY_R) {
+                craftingTab = (craftingTab + 1) % getCraftingTabCount();
+                craftingSelection = 0;
+            }
+            int count = getRecipeCountForTab(craftingTab, nearTable);
+            if (count > 0) {
+                if (down & KEY_UP) craftingSelection = (craftingSelection + count - 1) % count;
+                if (down & KEY_DOWN) craftingSelection = (craftingSelection + 1) % count;
+                if (down & KEY_A) {
+                    const CraftingRecipe* recipe = getRecipeForTabIndex(craftingTab, craftingSelection, nearTable);
+                    if (recipe) craftRecipe(player, *recipe, nearTable);
+                }
+            } else {
+                craftingSelection = 0;
+            }
+            renderFrame(player);
+            renderCraftingMenu(player, craftingTab, craftingSelection, nearTable);
             swiWaitForVBlank();
             continue;
         }
@@ -360,16 +403,27 @@ int main() {
                 if (action.type == HUD_TOUCH_SELECT_BLOCK) {
                     if (isCreativeMode()) player.selectedBlock = action.value;
                     else setSelectedSlot(player, action.value);
+                } else if (action.type == HUD_TOUCH_OPEN_CRAFTING && isSurvivalMode()) {
+                    craftingTab = 0;
+                    craftingSelection = 0;
+                    state = STATE_CRAFTING;
+                    renderCraftingMenu(player, craftingTab, craftingSelection, isPlayerNearCraftingTable(player));
+                    swiWaitForVBlank();
+                    continue;
                 }
             }
 
+
             updatePlayer(player, held, down);
+            updateMobs(player);
         } else if ((down & KEY_A) && isSurvivalMode()) {
             respawnPlayer(player);
             resetBreakState(breakState);
         }
 
         RayHit hit = castCenterRay(player, 5.0f);
+        float mobHitDist = 5.0f;
+        int hitMobIndex = raycastMob(player, 5.0f, &mobHitDist);
 
         if (player.alive) {
             if (isCreativeMode()) {
@@ -393,7 +447,16 @@ int main() {
                         }
                     }
                 }
-                if ((held & KEY_L) && hit.hit && !(hit.x == (int)player.x && hit.z == (int)player.z) && canSurvivalBreakBlock(hit.block, selectedTool)) {
+                bool mobIsCloser = (hitMobIndex >= 0) && (!hit.hit || mobHitDist <= hit.dist + 0.001f);
+                if ((down & KEY_L) && mobIsCloser) {
+                    int damage = 1;
+                    if (selectedTool == ITEM_WOOD_SWORD) damage = 4;
+                    else if (selectedTool == ITEM_STONE_SWORD) damage = 5;
+                    else if (selectedTool == ITEM_WOOD_AXE || selectedTool == ITEM_WOOD_PICKAXE || selectedTool == ITEM_WOOD_SHOVEL) damage = 2;
+                    else if (selectedTool == ITEM_STONE_AXE || selectedTool == ITEM_STONE_PICKAXE || selectedTool == ITEM_STONE_SHOVEL) damage = 3;
+                    damageMob(hitMobIndex, damage);
+                    resetBreakState(breakState);
+                } else if ((held & KEY_L) && hit.hit && !(hit.x == (int)player.x && hit.z == (int)player.z) && canSurvivalBreakBlock(hit.block, selectedTool) && !mobIsCloser) {
                     if (!breakState.active || breakState.x != hit.x || breakState.y != hit.y || breakState.z != hit.z) {
                         breakState.active = true;
                         breakState.x = hit.x;
@@ -406,7 +469,7 @@ int main() {
                     if (breakState.ticks >= needed) {
                         int brokenBlock = getBlock(hit.x, hit.y, hit.z);
                         setBlock(hit.x, hit.y, hit.z, BLOCK_AIR);
-                        addBlockDropToInventory(player, brokenBlock);
+                        addBlockDropToInventory(player, getBlockDropForSurvival(brokenBlock));
                         resetBreakState(breakState);
                     }
                 } else {

@@ -153,6 +153,75 @@ static inline float grad2(int hash, float x, float y) {
     }
 }
 
+
+static inline float grad3(int hash, float x, float y, float z) {
+    switch (hash & 15) {
+        case 0: return x + y;
+        case 1: return -x + y;
+        case 2: return x - y;
+        case 3: return -x - y;
+        case 4: return x + z;
+        case 5: return -x + z;
+        case 6: return x - z;
+        case 7: return -x - z;
+        case 8: return y + z;
+        case 9: return -y + z;
+        case 10: return y - z;
+        case 11: return -y - z;
+        case 12: return x + y;
+        case 13: return -x + y;
+        case 14: return -y + z;
+        default: return -y - z;
+    }
+}
+
+static float perlin3D(float x, float y, float z) {
+    int xi0 = (int)std::floor(x) & 255;
+    int yi0 = (int)std::floor(y) & 255;
+    int zi0 = (int)std::floor(z) & 255;
+    int xi1 = (xi0 + 1) & 255;
+    int yi1 = (yi0 + 1) & 255;
+    int zi1 = (zi0 + 1) & 255;
+
+    float xf = x - std::floor(x);
+    float yf = y - std::floor(y);
+    float zf = z - std::floor(z);
+    float u = fadef(xf);
+    float v = fadef(yf);
+    float w = fadef(zf);
+
+    int aaa = gPerm[gPerm[gPerm[xi0] + yi0] + zi0];
+    int aba = gPerm[gPerm[gPerm[xi0] + yi1] + zi0];
+    int aab = gPerm[gPerm[gPerm[xi0] + yi0] + zi1];
+    int abb = gPerm[gPerm[gPerm[xi0] + yi1] + zi1];
+    int baa = gPerm[gPerm[gPerm[xi1] + yi0] + zi0];
+    int bba = gPerm[gPerm[gPerm[xi1] + yi1] + zi0];
+    int bab = gPerm[gPerm[gPerm[xi1] + yi0] + zi1];
+    int bbb = gPerm[gPerm[gPerm[xi1] + yi1] + zi1];
+
+    float x1 = lerpf(grad3(aaa, xf, yf, zf), grad3(baa, xf - 1.0f, yf, zf), u);
+    float x2 = lerpf(grad3(aba, xf, yf - 1.0f, zf), grad3(bba, xf - 1.0f, yf - 1.0f, zf), u);
+    float y1 = lerpf(x1, x2, v);
+    float x3 = lerpf(grad3(aab, xf, yf, zf - 1.0f), grad3(bab, xf - 1.0f, yf, zf - 1.0f), u);
+    float x4 = lerpf(grad3(abb, xf, yf - 1.0f, zf - 1.0f), grad3(bbb, xf - 1.0f, yf - 1.0f, zf - 1.0f), u);
+    float y2 = lerpf(x3, x4, v);
+    return lerpf(y1, y2, w);
+}
+
+static float fbm3D(float x, float y, float z, int octaves, float lacunarity, float gain) {
+    float value = 0.0f;
+    float amp = 1.0f;
+    float freq = 1.0f;
+    float norm = 0.0f;
+    for (int i = 0; i < octaves; ++i) {
+        value += perlin3D(x * freq, y * freq, z * freq) * amp;
+        norm += amp;
+        freq *= lacunarity;
+        amp *= gain;
+    }
+    return norm > 0.0f ? value / norm : 0.0f;
+}
+
 static float perlin2D(float x, float y) {
     int xi0 = (int)std::floor(x) & 255;
     int yi0 = (int)std::floor(y) & 255;
@@ -497,6 +566,53 @@ static void generateColumn(int x, int z) {
     refreshTopVisibleColumn(x, z);
 }
 
+
+bool isNaturalSurfaceBlock(int block) {
+    return block == BLOCK_GRASS || block == BLOCK_DIRT || block == BLOCK_SAND;
+}
+
+static void carveCavesAndPlaceOre() {
+    if (gWorldConfig.worldType == WORLD_TYPE_SUPERFLAT) return;
+
+    for (int x = 1; x < WORLD_X - 1; ++x) {
+        for (int z = 1; z < WORLD_Z - 1; ++z) {
+            int surface = 0;
+            for (int y = WORLD_Y - 1; y >= 0; --y) {
+                int b = gWorld[x][y][z];
+                if (b != BLOCK_AIR && b != BLOCK_WATER) { surface = y; break; }
+            }
+            for (int y = 2; y < surface - 1; ++y) {
+                const int block = gWorld[x][y][z];
+                if (block != BLOCK_STONE && block != BLOCK_DIRT && block != BLOCK_GRASS) continue;
+
+                float cave1 = fbm3D((float)x * 0.12f + 17.0f, (float)y * 0.19f - 3.0f, (float)z * 0.12f + 9.0f, 3, 2.0f, 0.5f);
+                float cave2 = fbm3D((float)x * 0.22f - 7.0f, (float)y * 0.14f + 5.0f, (float)z * 0.22f - 11.0f, 2, 2.0f, 0.55f);
+                float cave = cave1 * 0.75f + cave2 * 0.25f;
+                float openness = 0.54f;
+                if (y < kSeaLevel - 1) openness += 0.05f;
+                if (y > surface - 5) openness += 0.10f;
+                if (cave > openness) {
+                    gWorld[x][y][z] = BLOCK_AIR;
+                    continue;
+                }
+
+                if (block == BLOCK_STONE) {
+                    float ore = fbm3D((float)x * 0.28f + 41.0f, (float)y * 0.31f + 13.0f, (float)z * 0.28f - 19.0f, 2, 2.0f, 0.5f);
+                    if (y < surface - 2 && y > 1 && ore > 0.42f) {
+                        gWorld[x][y][z] = BLOCK_COAL_ORE;
+                    }
+                }
+            }
+
+            for (int y = 1; y < surface; ++y) {
+                if (gWorld[x][y][z] == BLOCK_AIR && gWorld[x][y - 1][z] == BLOCK_GRASS) gWorld[x][y - 1][z] = BLOCK_DIRT;
+                if (gWorld[x][y][z] == BLOCK_AIR && gWorld[x][y - 1][z] == BLOCK_SAND && y <= kSeaLevel) gWorld[x][y][z] = BLOCK_WATER;
+            }
+            refreshTopVisibleColumn(x, z);
+        }
+    }
+}
+
 void beginWorldGeneration(const WorldGenConfig& config) {
     gWorldConfig = config;
     gPendingConfig = config;
@@ -570,6 +686,7 @@ bool generateWorldStep(int columnsPerStep) {
         }
         gSpawnX = bestX;
         gSpawnZ = bestZ;
+        carveCavesAndPlaceOre();
         rebuildTorchLight();
         gWorldGenProgress = 100;
         ++gWorldRevision;

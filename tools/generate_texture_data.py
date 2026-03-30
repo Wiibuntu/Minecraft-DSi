@@ -40,15 +40,27 @@ TEXTURE_SPECS = [
     ('TEX_GOLD_BLOCK', 'gold_block.png'),
     ('TEX_IRON_BLOCK', 'iron_block.png'),
     ('TEX_TORCH', 'torch.png'),
+    ('TEX_CRAFTING_TABLE_TOP', 'crafting_table_top.png'),
+    ('TEX_CRAFTING_TABLE_SIDE', 'crafting_table_side.png'),
+    ('TEX_CRAFTING_TABLE_FRONT', 'crafting_table_front.png'),
+    ('TEX_FURNACE_TOP', 'furnace_top.png'),
+    ('TEX_FURNACE_SIDE', 'furnace_side.png'),
+    ('TEX_FURNACE_FRONT', 'furnace_front.png'),
+    ('TEX_COAL_ORE', 'coal_ore.png'),
 ]
 
 ITEM_TEXTURE_SPECS = [
     ('TEX_ITEM_APPLE', Path('items/apple.png')),
+    ('TEX_ITEM_STICK', Path('items/stick.png')),
+    ('TEX_ITEM_COAL', Path('items/coal.png')),
     ('TEX_ITEM_WOOD_PICKAXE', Path('items/wooden_pickaxe.png')),
     ('TEX_ITEM_STONE_PICKAXE', Path('items/stone_pickaxe.png')),
     ('TEX_ITEM_WOOD_AXE', Path('items/wooden_axe.png')),
+    ('TEX_ITEM_STONE_AXE', Path('items/stone_axe.png')),
     ('TEX_ITEM_WOOD_SHOVEL', Path('items/wooden_shovel.png')),
+    ('TEX_ITEM_STONE_SHOVEL', Path('items/stone_shovel.png')),
     ('TEX_ITEM_WOOD_SWORD', Path('items/wooden_sword.png')),
+    ('TEX_ITEM_STONE_SWORD', Path('items/stone_sword.png')),
 ]
 
 # Fallbacks intentionally simple for robustness on the DSi build.
@@ -85,6 +97,13 @@ FALLBACKS = {
     'TEX_GOLD_BLOCK': [0x02FF] * 64,
     'TEX_IRON_BLOCK': [0xD6B5] * 64,
     'TEX_TORCH': [0x03FF if (i % 8) < 2 else 0xA22F for i in range(64)],
+    'TEX_CRAFTING_TABLE_TOP': [0xB22F] * 64,
+    'TEX_CRAFTING_TABLE_SIDE': [0x994D] * 64,
+    'TEX_CRAFTING_TABLE_FRONT': [0x8C66] * 64,
+    'TEX_FURNACE_TOP': [0xBDEF] * 64,
+    'TEX_FURNACE_SIDE': [0xA94A] * 64,
+    'TEX_FURNACE_FRONT': [0x8C63] * 64,
+    'TEX_COAL_ORE': [0xBDEF if (i + i//8) % 3 else 0x02A0 for i in range(64)],
 }
 
 
