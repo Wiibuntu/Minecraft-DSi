@@ -150,6 +150,19 @@ static int gLastMenuLogoW = 0;
 static int gLastMenuLogoH = 0;
 static int gLastLoadingProgress = -1;
 static int gLastGraphicsSlider = -1;
+static bool gMobColorCacheValid = false;
+static u16 gPigHeadFront = 0;
+static u16 gPigHeadSide = 0;
+static u16 gPigHeadTop = 0;
+static u16 gPigSnoutFront = 0;
+static u16 gPigSnoutSide = 0;
+static u16 gPigSnoutTop = 0;
+static u16 gPigBodyFront = 0;
+static u16 gPigBodySide = 0;
+static u16 gPigBodyTop = 0;
+static u16 gPigLegFront = 0;
+static u16 gPigLegSide = 0;
+static u16 gPigLegTop = 0;
 
 static inline u16 rgb15(int r, int g, int b);
 static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float forwardY, float forwardZ, float rightX, float rightY, float rightZ, float upX, float upY, float upZ);
@@ -826,6 +839,7 @@ void initRenderer() {
     gLastMenuLogoH = 0;
     gLastLoadingProgress = -1;
     gLastGraphicsSlider = -1;
+    gMobColorCacheValid = false;
 }
 
 
@@ -837,6 +851,7 @@ void invalidateMenuCache() {
     gLastMenuLogoH = 0;
     gLastLoadingProgress = -1;
     gLastGraphicsSlider = -1;
+    gMobColorCacheValid = false;
 }
 
 void prepareGameplayTransition() {
@@ -918,6 +933,7 @@ void setRenderResolution(int width, int height) {
     gLastZ = 9999.0f;
     gHudFrameValid = false;
     gLastGraphicsSlider = -1;
+    gMobColorCacheValid = false;
 }
 
 void cycleRenderDistance(int delta) {
@@ -1290,6 +1306,23 @@ static inline u16 sampleMobColor(int x0, int y0, int w, int h) {
     return rgb15((int)(rs / n), (int)(gs / n), (int)(bs / n));
 }
 
+static void ensureMobColorCache() {
+    if (gMobColorCacheValid) return;
+    gPigHeadFront = sampleMobColor(16, 16, 16, 16);
+    gPigHeadSide = sampleMobColor(0, 16, 16, 16);
+    gPigHeadTop = sampleMobColor(16, 0, 16, 16);
+    gPigSnoutFront = sampleMobColor(34, 34, 8, 6);
+    gPigSnoutSide = sampleMobColor(32, 34, 2, 6);
+    gPigSnoutTop = sampleMobColor(34, 32, 8, 2);
+    gPigBodyFront = sampleMobColor(40, 16, 16, 16);
+    gPigBodySide = sampleMobColor(56, 16, 8, 16);
+    gPigBodyTop = sampleMobColor(40, 0, 16, 16);
+    gPigLegFront = sampleMobColor(8, 40, 8, 12);
+    gPigLegSide = sampleMobColor(0, 40, 8, 12);
+    gPigLegTop = sampleMobColor(8, 32, 8, 8);
+    gMobColorCacheValid = true;
+}
+
 static int appendCuboidFaces(RenderFace* outFaces, int faceCount, const CuboidDef& cuboid, const Mob& mob,
         const Player& p, float eyeY,
         float forwardX, float forwardY, float forwardZ,
@@ -1344,20 +1377,7 @@ static int appendCuboidFaces(RenderFace* outFaces, int faceCount, const CuboidDe
 }
 
 static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float forwardY, float forwardZ, float rightX, float rightY, float rightZ, float upX, float upY, float upZ) {
-    // Full 64x32 pig skin sampling. The previous path downscaled the mob texture to 32x16,
-    // which blurred face-region lookups and made the block model read as garbled.
-    const u16 headFront = sampleMobColor(16, 16, 16, 16);
-    const u16 headSide = sampleMobColor(0, 16, 16, 16);
-    const u16 headTop = sampleMobColor(16, 0, 16, 16);
-    const u16 snoutFront = sampleMobColor(34, 34, 8, 6);
-    const u16 snoutSide = sampleMobColor(32, 34, 2, 6);
-    const u16 snoutTop = sampleMobColor(34, 32, 8, 2);
-    const u16 bodyFront = sampleMobColor(40, 16, 16, 16);
-    const u16 bodySide = sampleMobColor(56, 16, 8, 16);
-    const u16 bodyTop = sampleMobColor(40, 0, 16, 16);
-    const u16 legFront = sampleMobColor(8, 40, 8, 12);
-    const u16 legSide = sampleMobColor(0, 40, 8, 12);
-    const u16 legTop = sampleMobColor(8, 32, 8, 8);
+    ensureMobColorCache();
 
     for (int i = 0; i < getMobCount(); ++i) {
         const Mob* mob = getMob(i);
@@ -1365,8 +1385,10 @@ static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float
         float dx = mob->x - p.x;
         float dy = (mob->y + 0.5f) - eyeY;
         float dz = mob->z - p.z;
-        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist > getRenderDistance() || dist < 0.08f) continue;
+        const float distSq = dx * dx + dy * dy + dz * dz;
+        const float maxDist = getRenderDistance();
+        if (distSq > maxDist * maxDist || distSq < 0.0064f) continue;
+        float dist = std::sqrt(distSq);
         float invDist = 1.0f / dist;
         RayHit occlude = castVisibleRayInternal(p, dx * invDist, dy * invDist, dz * invDist, getRenderDistance());
         if (occlude.hit && occlude.dist < dist - 0.35f) continue;
@@ -1377,14 +1399,14 @@ static void drawMobBillboards(const Player& p, float eyeY, float forwardX, float
         const float legLiftB = -legLiftA;
         // Canonical quadruped proportions: 4x6x4 legs, 10x8x16 body, 8x8x8 head, scaled to a 1-block-high pig.
         CuboidDef parts[6] = {
-            {-0.20f, 0.00f + legLiftA, -0.40f, -0.06f, 0.38f + legLiftA, -0.24f, legFront, legFront, legSide, legSide, legTop, legTop},
-            { 0.06f, 0.00f + legLiftB, -0.40f,  0.20f, 0.38f + legLiftB, -0.24f, legFront, legFront, legSide, legSide, legTop, legTop},
-            {-0.20f, 0.00f + legLiftB,  0.18f, -0.06f, 0.38f + legLiftB,  0.34f, legFront, legFront, legSide, legSide, legTop, legTop},
-            { 0.06f, 0.00f + legLiftA,  0.18f,  0.20f, 0.38f + legLiftA,  0.34f, legFront, legFront, legSide, legSide, legTop, legTop},
-            {-0.34f, 0.30f, -0.38f,  0.34f, 0.72f,  0.38f, bodyFront, bodyFront, bodySide, bodySide, bodyTop, bodyTop},
-            {-0.24f, 0.42f, -0.70f,  0.24f, 0.86f, -0.22f, headFront, headFront, headSide, headSide, headTop, headTop},
+            {-0.20f, 0.00f + legLiftA, -0.40f, -0.06f, 0.38f + legLiftA, -0.24f, gPigLegFront, gPigLegFront, gPigLegSide, gPigLegSide, gPigLegTop, gPigLegTop},
+            { 0.06f, 0.00f + legLiftB, -0.40f,  0.20f, 0.38f + legLiftB, -0.24f, gPigLegFront, gPigLegFront, gPigLegSide, gPigLegSide, gPigLegTop, gPigLegTop},
+            {-0.20f, 0.00f + legLiftB,  0.18f, -0.06f, 0.38f + legLiftB,  0.34f, gPigLegFront, gPigLegFront, gPigLegSide, gPigLegSide, gPigLegTop, gPigLegTop},
+            { 0.06f, 0.00f + legLiftA,  0.18f,  0.20f, 0.38f + legLiftA,  0.34f, gPigLegFront, gPigLegFront, gPigLegSide, gPigLegSide, gPigLegTop, gPigLegTop},
+            {-0.34f, 0.30f, -0.38f,  0.34f, 0.72f,  0.38f, gPigBodyFront, gPigBodyFront, gPigBodySide, gPigBodySide, gPigBodyTop, gPigBodyTop},
+            {-0.24f, 0.42f, -0.70f,  0.24f, 0.86f, -0.22f, gPigHeadFront, gPigHeadFront, gPigHeadSide, gPigHeadSide, gPigHeadTop, gPigHeadTop},
         };
-        CuboidDef snout = {-0.12f, 0.50f, -0.82f, 0.12f, 0.68f, -0.70f, snoutFront, snoutFront, snoutSide, snoutSide, snoutTop, snoutTop};
+        CuboidDef snout = {-0.12f, 0.50f, -0.82f, 0.12f, 0.68f, -0.70f, gPigSnoutFront, gPigSnoutFront, gPigSnoutSide, gPigSnoutSide, gPigSnoutTop, gPigSnoutTop};
 
         RenderFace faces[42];
         int faceCount = 0;

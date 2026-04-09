@@ -18,7 +18,15 @@ ifeq ($(strip $(PORTLIBS)),)
 export PORTLIBS := $(DEVKITPRO)/portlibs/nds
 endif
 
-include $(DEVKITARM)/ds_rules
+ifeq ($(strip $(CALICO)),)
+export CALICO := $(DEVKITPRO)/calico
+endif
+
+ifneq ($(wildcard $(CALICO)/share/ds9.specs),)
+LDSPECS ?= $(CALICO)/share/ds9.specs
+else
+LDSPECS ?= ds_arm9.specs
+endif
 
 #---------------------------------------------------------------------------------
 # Project settings
@@ -27,11 +35,17 @@ TARGET   := Minecraft
 BUILD    := build
 SOURCES  := source
 INCLUDES := include build
-DATA     := nitrofiles music
+DATA     :=
 GRAPHICS :=
 AUDIO    :=
 ICON     := icon.bmp
 NITRO    :=
+ARM7DIR  := arm7
+ARM7ELF  := $(CURDIR)/$(ARM7DIR)/audio_arm7.elf
+
+# ds_rules must be included after TARGET/BUILD/SOURCES/NITRO/ARM7DIR/etc. are defined
+# so ndstool packaging sees NitroFS content and the ARM7 binary.
+include $(DEVKITARM)/ds_rules
 
 #---------------------------------------------------------------------------------
 # Code generation options
@@ -43,15 +57,19 @@ CFLAGS := -g -Wall -Wextra -O3 -ffast-math -fomit-frame-pointer -ffunction-secti
 CFLAGS += $(INCLUDE) -DARM9 -D__NDS__
 CXXFLAGS := $(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
 ASFLAGS := -g $(ARCH)
-LDFLAGS := -specs=ds_arm9.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS := -specs=$(LDSPECS) -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 #---------------------------------------------------------------------------------
 # Libraries
 #---------------------------------------------------------------------------------
-LIBS := -lnds9 -lfat
+LIBS := -lmm9 -lnds9 -lfat
 
 # Top-level library roots (must contain include/ and lib/)
 LIBDIRS := $(PORTLIBS) $(LIBNDS)
+
+ifneq ($(wildcard $(CALICO)/include/calico.h),)
+CALICO_INCLUDE := -I$(CALICO)/include
+endif
 
 #---------------------------------------------------------------------------------
 # Build rules
@@ -83,11 +101,11 @@ export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 # Critical for ds_rules: explicit linker search paths.
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-.PHONY: all clean $(BUILD) gen_textures gen_menu_assets gen_music gen_mobs
+.PHONY: all clean $(BUILD) gen_textures gen_menu_assets gen_music gen_mobs arm7
 
-all: gen_textures gen_menu_assets gen_music gen_mobs $(BUILD)
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
-
+all: gen_textures gen_menu_assets gen_music gen_mobs arm7 $(BUILD)
+	@$(MAKE) --no-print-directory -C "$(BUILD)" -f "$(CURDIR)/Makefile"
+	
 gen_textures:
 	@echo Generating texture data from textures/*.png ...
 	@python3 "$(CURDIR)/tools/generate_texture_data.py"
@@ -101,13 +119,18 @@ gen_music:
 
 gen_mobs:
 	@python3 "$(CURDIR)/tools/generate_mob_assets.py"
+	
+arm7:
+	@$(MAKE) --no-print-directory -C "$(CURDIR)/$(ARM7DIR)" -f "$(CURDIR)/$(ARM7DIR)/Makefile"
 
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 
+
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).elf $(TARGET).nds $(TARGET).ds.gba
+	@rm -fr "$(BUILD)" "$(TARGET).elf" "$(TARGET).nds" "$(TARGET).ds.gba"
+	@$(MAKE) --no-print-directory -C "$(CURDIR)/$(ARM7DIR)" -f "$(CURDIR)/$(ARM7DIR)/Makefile" clean || true
 
 # ensure packaged zips with stale dependency files cannot break fresh builds
 .PHONY: distclean

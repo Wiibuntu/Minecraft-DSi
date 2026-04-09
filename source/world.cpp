@@ -19,6 +19,7 @@ static int gSpawnY = 10;
 static int gSpawnZ = WORLD_Z / 2;
 static u8 gPerm[512];
 static u8 gTorchLight[WORLD_X][WORLD_Y][WORLD_Z];
+static u8 gSkyOcclusionCache[WORLD_X][WORLD_Y][WORLD_Z];
 static int gWorldTime = 6000;
 static const int kDayLength = 24000;
 
@@ -33,27 +34,99 @@ bool isLightEmitterBlock(int block) {
     return block == BLOCK_TORCH;
 }
 
+static inline bool isLeavesBlock(int block) {
+    return block == BLOCK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES || block == BLOCK_JUNGLE_LEAVES;
+}
+
+static inline u8 computeSkyOcclusionAt(int x, int y, int z) {
+    int occlusion = 0;
+    int leafCover = 0;
+    for (int yy = y + 1; yy < WORLD_Y; ++yy) {
+        const int above = gWorld[x][yy][z];
+        if (above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_GLASS || above == BLOCK_TORCH) continue;
+        if (isLeavesBlock(above)) {
+            ++leafCover;
+            occlusion += 2;
+        } else {
+            occlusion += 6;
+        }
+        if (occlusion >= 26) break;
+    }
+    if (leafCover > 0) occlusion -= 2;
+    if (occlusion < 0) occlusion = 0;
+    if (occlusion > 23) occlusion = 23;
+    return (u8)occlusion;
+}
+
+static void rebuildSkyLightColumn(int x, int z) {
+    if (x < 0 || x >= WORLD_X || z < 0 || z >= WORLD_Z) return;
+    for (int y = 0; y < WORLD_Y; ++y) {
+        gSkyOcclusionCache[x][y][z] = computeSkyOcclusionAt(x, y, z);
+    }
+}
+
+static void rebuildAllSkyLight() {
+    for (int x = 0; x < WORLD_X; ++x) {
+        for (int z = 0; z < WORLD_Z; ++z) {
+            rebuildSkyLightColumn(x, z);
+        }
+    }
+}
+
+static void accumulateTorchLightFromEmitter(int ex, int ey, int ez) {
+    for (int dz = -6; dz <= 6; ++dz) {
+        for (int dy = -6; dy <= 6; ++dy) {
+            for (int dx = -6; dx <= 6; ++dx) {
+                int dist = std::abs(dx) + std::abs(dy) + std::abs(dz);
+                if (dist > 6) continue;
+                int ax = ex + dx;
+                int ay = ey + dy;
+                int az = ez + dz;
+                if (!inBounds(ax, ay, az)) continue;
+                int light = 28 - dist * 4;
+                if (light < 0) light = 0;
+                if (gTorchLight[ax][ay][az] < light) gTorchLight[ax][ay][az] = (u8)light;
+            }
+        }
+    }
+}
+
 static void rebuildTorchLight() {
     std::memset(gTorchLight, 0, sizeof(gTorchLight));
     for (int x = 0; x < WORLD_X; ++x) {
         for (int y = 0; y < WORLD_Y; ++y) {
             for (int z = 0; z < WORLD_Z; ++z) {
-                if (!isLightEmitterBlock(gWorld[x][y][z])) continue;
-                for (int dz = -6; dz <= 6; ++dz) {
-                    for (int dy = -6; dy <= 6; ++dy) {
-                        for (int dx = -6; dx <= 6; ++dx) {
-                            int dist = std::abs(dx) + std::abs(dy) + std::abs(dz);
-                            if (dist > 6) continue;
-                            int ax = x + dx;
-                            int ay = y + dy;
-                            int az = z + dz;
-                            if (!inBounds(ax, ay, az)) continue;
-                            int light = 28 - dist * 4;
-                            if (light < 0) light = 0;
-                            if (gTorchLight[ax][ay][az] < light) gTorchLight[ax][ay][az] = (u8)light;
-                        }
-                    }
-                }
+                if (isLightEmitterBlock(gWorld[x][y][z])) accumulateTorchLightFromEmitter(x, y, z);
+            }
+        }
+    }
+}
+
+static void rebuildTorchLightNeighborhood(int cx, int cy, int cz) {
+    const int radius = 6;
+    const int minX = cx - radius < 0 ? 0 : cx - radius;
+    const int maxX = cx + radius >= WORLD_X ? WORLD_X - 1 : cx + radius;
+    const int minY = cy - radius < 0 ? 0 : cy - radius;
+    const int maxY = cy + radius >= WORLD_Y ? WORLD_Y - 1 : cy + radius;
+    const int minZ = cz - radius < 0 ? 0 : cz - radius;
+    const int maxZ = cz + radius >= WORLD_Z ? WORLD_Z - 1 : cz + radius;
+
+    for (int x = minX; x <= maxX; ++x)
+        for (int y = minY; y <= maxY; ++y)
+            for (int z = minZ; z <= maxZ; ++z)
+                gTorchLight[x][y][z] = 0;
+
+    const int emitterMinX = minX - radius < 0 ? 0 : minX - radius;
+    const int emitterMaxX = maxX + radius >= WORLD_X ? WORLD_X - 1 : maxX + radius;
+    const int emitterMinY = minY - radius < 0 ? 0 : minY - radius;
+    const int emitterMaxY = maxY + radius >= WORLD_Y ? WORLD_Y - 1 : maxY + radius;
+    const int emitterMinZ = minZ - radius < 0 ? 0 : minZ - radius;
+    const int emitterMaxZ = maxZ + radius >= WORLD_Z ? WORLD_Z - 1 : maxZ + radius;
+
+    for (int x = emitterMinX; x <= emitterMaxX; ++x) {
+        for (int y = emitterMinY; y <= emitterMaxY; ++y) {
+            for (int z = emitterMinZ; z <= emitterMaxZ; ++z) {
+                if (isLightEmitterBlock(gWorld[x][y][z])) accumulateTorchLightFromEmitter(x, y, z);
             }
         }
     }
@@ -272,10 +345,14 @@ int getBlock(int x, int y, int z) {
 
 void setBlock(int x, int y, int z, int block) {
     if (!inBounds(x, y, z)) return;
-    if (gWorld[x][y][z] == (u8)block) return;
+    const u8 oldBlock = gWorld[x][y][z];
+    if (oldBlock == (u8)block) return;
     gWorld[x][y][z] = (u8)block;
     refreshTopVisibleColumn(x, z);
-    rebuildTorchLight();
+    rebuildSkyLightColumn(x, z);
+    if (isLightEmitterBlock(oldBlock) || isLightEmitterBlock(block)) {
+        rebuildTorchLightNeighborhood(x, y, z);
+    }
     ++gWorldRevision;
 }
 
@@ -330,26 +407,8 @@ int getBlockLight(int x, int y, int z) {
 int getCombinedLightLevel(int x, int y, int z) {
     int sky = getSkyLightLevel();
     if (inBounds(x, y, z)) {
-        int occlusion = 0;
-        int leafCover = 0;
-        for (int yy = y + 1; yy < WORLD_Y; ++yy) {
-            const int above = getBlock(x, yy, z);
-            if (above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_GLASS || above == BLOCK_TORCH) continue;
-            const bool leaves = (above == BLOCK_LEAVES || above == BLOCK_BIRCH_LEAVES || above == BLOCK_SPRUCE_LEAVES || above == BLOCK_JUNGLE_LEAVES);
-            if (leaves) {
-                ++leafCover;
-                occlusion += 2;
-            } else {
-                occlusion += 6;
-            }
-            if (occlusion >= 26) break;
-        }
-
-        // Keep some ambient skylight even under cover so shadows stay readable.
-        const int skyFloor = 8;
-        sky -= occlusion;
-        if (leafCover > 0) sky += 2;
-        if (sky < skyFloor) sky = skyFloor;
+        sky -= gSkyOcclusionCache[x][y][z];
+        if (sky < 8) sky = 8;
     }
     int block = getBlockLight(x, y, z);
     return sky > block ? sky : block;
@@ -621,6 +680,7 @@ void beginWorldGeneration(const WorldGenConfig& config) {
     std::memset(gWorld, 0, sizeof(gWorld));
     std::memset(gTopVisible, 0, sizeof(gTopVisible));
     std::memset(gTorchLight, 0, sizeof(gTorchLight));
+    std::memset(gSkyOcclusionCache, 0, sizeof(gSkyOcclusionCache));
     gWorldTime = 6000;
     gWorldRevision = 1;
     gGenX = 0;
@@ -687,6 +747,7 @@ bool generateWorldStep(int columnsPerStep) {
         gSpawnX = bestX;
         gSpawnZ = bestZ;
         carveCavesAndPlaceOre();
+        rebuildAllSkyLight();
         rebuildTorchLight();
         gWorldGenProgress = 100;
         ++gWorldRevision;
@@ -738,6 +799,7 @@ bool importWorldState(const void* src, int srcSize, const WorldGenConfig* config
     gSpawnX = spawnX;
     gSpawnY = spawnY;
     gSpawnZ = spawnZ;
+    rebuildAllSkyLight();
     rebuildTorchLight();
     ++gWorldRevision;
     gWorldGenProgress = 100;

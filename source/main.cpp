@@ -150,6 +150,7 @@ int main() {
                 touchPosition touch;
                 touchRead(&touch);
                 int action = handleTitleMenuTouch(touch.px, touch.py);
+                if (action != MENU_ACTION_NONE) audioPlayUiClick();
                 if (action == MENU_ACTION_NEW_GAME) {
                     newWorldConfig.seed = nextRandomSeed();
                     newWorldConfig.gameMode = GAME_MODE_CREATIVE;
@@ -200,6 +201,7 @@ int main() {
                 touchPosition touch;
                 touchRead(&touch);
                 int action = handleWorldSetupTouch(touch.px, touch.py);
+                if (action != MENU_ACTION_NONE) audioPlayUiClick();
                 switch (action) {
                     case MENU_ACTION_BACK:
                         invalidateMenuCache();
